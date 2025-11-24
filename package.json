@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/AsheerAF911/Whatsapp-Bot#readme",
   "dependencies": {
+    "axios": "^1.13.2",
     "express": "^5.1.0",
     "node-fetch": "^3.3.2"
   }
