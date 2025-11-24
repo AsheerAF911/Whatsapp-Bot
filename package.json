@@ -1,0 +1,26 @@
+{
+  "name": "auto-reply-setup",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start AshAF": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AsheerAF911/Whatsapp-Bot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AsheerAF911/Whatsapp-Bot/issues"
+  },
+  "homepage": "https://github.com/AsheerAF911/Whatsapp-Bot#readme",
+  "dependencies": {
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2"
+  }
+}
