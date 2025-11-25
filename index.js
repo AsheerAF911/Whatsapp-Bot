@@ -7,9 +7,25 @@ app.use(express.json());
 const token = process.env.WHATSAPP_TOKEN;
 const phoneID = process.env.PHONE_NUMBER_ID;
 
+// Webhook verification for Meta
+app.get("/webhook", (req, res) => {
+    if (req.query["hub.verify_token"] === process.env.VERIFY_TOKEN) {
+        return res.send(req.query["hub.challenge"]);
+    }
+    res.send("Error");
+});
+
+// Incoming messages from WhatsApp
 app.post("/webhook", async (req, res) => {
     try {
-        const message = req.body.entry[0].changes[0].value.messages[0];
+        const change = req.body.entry?.[0]?.changes?.[0]?.value;
+
+        // Ignore non-message events
+        if (!change?.messages) {
+            return res.sendStatus(200);
+        }
+
+        const message = change.messages[0];
         const from = message.from;
 
         await axios.post(
@@ -37,17 +53,11 @@ Once you book, you'll get the secure intake form to complete.`
 
         res.sendStatus(200);
     } catch (error) {
-        console.error(error);
+        console.error("❌ Error:", error?.response?.data || error);
         res.sendStatus(500);
     }
 });
 
-app.get("/webhook", (req, res) => {
-    if (req.query["hub.verify_token"] === process.env.VERIFY_TOKEN) {
-        res.send(req.query["hub.challenge"]);
-    } else {
-        res.send("Error");
-    }
-});
-
-app.listen(3000, () => console.log("Bot running"));
+// Render must use dynamic port
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Bot running on " + PORT));
