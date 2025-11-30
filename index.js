@@ -68,41 +68,24 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 // ------------------------------------------
 // NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
 // ------------------------------------------
-app.post("/calendly", async (req, res) => {
+app.get("/calendly", async (req, res) => {
+    const name = req.query.name;
+    const phone = req.query["questions[1]"]; // phone from Calendly form
+
     try {
-        console.log("📩 Calendly Webhook Received:", req.body);
-
-        const event = req.body.payload;
-
-        // Extract invitee info
-        const invitee = event?.invitee;
-        const phone = invitee?.questions_and_answers?.find(q => q.question.includes("phone"))?.answer;
-
-        if (!phone) {
-            console.log("❌ No phone number found");
-            return res.sendStatus(200);
-        }
-
-        // CLEAN PHONE NUMBER (Remove spaces, +, etc.)
-        const whatsappNumber = phone.replace(/\D/g, "");
-
-        // SEND CONFIRMATION MESSAGE ON WHATSAPP
+        // send WhatsApp confirmation
         await axios.post(
             `https://graph.facebook.com/v17.0/${phoneID}/messages`,
             {
                 messaging_product: "whatsapp",
-                to: whatsappNumber,
+                to: phone,
                 type: "text",
                 text: {
-                    body: `🎉 Your consultation is booked!
+                    body: `Hi ${name}! 👋
+Your consultation is confirmed.
 
-📅 Date: ${event.event.start_time}
-🧑‍⚕️ Provider: Clinic
-
-Before your session, please complete this secure intake form:
-https://yourformlink.com
-
-Thanks! Looking forward to meeting you.`
+Here is your intake form:
+{{INTAKE_FORM_LINK}}`
                 }
             },
             {
@@ -113,13 +96,12 @@ Thanks! Looking forward to meeting you.`
             }
         );
 
-        res.sendStatus(200);
-    } catch (error) {
-        console.error("❌ Calendly Error:", error?.response?.data || error);
-        res.sendStatus(500);
+        res.send("WhatsApp confirmation sent!");
+    } catch (err) {
+        console.error(err.response?.data || err);
+        res.send("Error sending WhatsApp message");
     }
 });
-
 
 // --------------------------
 // SERVER START
