@@ -69,31 +69,32 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 // NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
 // ------------------------------------------
 app.get("/calendly", async (req, res) => {
-    console.log("🔎 Calendly redirect received:", req.query);
+    console.log("🔍 Calendly Redirect Query:", req.query);
 
-    // Calendly sends these exact params:
     const name = req.query.invitee_full_name;
-    const phone = req.query["questions[1]"] || req.query["questions%5B1%5D"];
+    const phoneRaw = req.query.answer_1;  // Calendly sent phone here
 
-    if (!phone) {
-        return res.send("❌ Phone number missing in redirect!");
+    if (!phoneRaw) {
+        return res.send("❌ Phone number missing from query!");
     }
 
-    const cleanedPhone = phone.replace(/\D/g, ""); // clean into WhatsApp format
+    const phone = phoneRaw.replace(/\D/g, ""); // clean into WhatsApp format
 
     try {
         await axios.post(
             `https://graph.facebook.com/v17.0/${phoneID}/messages`,
             {
                 messaging_product: "whatsapp",
-                to: cleanedPhone,
+                to: phone,
                 type: "text",
                 text: {
                     body: `Hi ${name}! 👋  
 Your consultation is confirmed.
 
-Before the session, complete this short intake form:
-👉 {{INTAKE_FORM_LINK}}`
+Before your session, complete this intake form:
+👉 {{INTAKE_FORM_LINK}}
+
+Thank you!`
                 }
             },
             {
@@ -105,12 +106,11 @@ Before the session, complete this short intake form:
         );
 
         res.send("🎉 WhatsApp confirmation sent!");
-    } catch (err) {
-        console.error("❌ WhatsApp Error:", err.response?.data || err);
+    } catch (error) {
+        console.error("❌ WhatsApp Error:", error.response?.data || error);
         res.send("Error sending WhatsApp message");
     }
 });
-
 
 // --------------------------
 // SERVER START
