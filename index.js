@@ -68,7 +68,7 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 // ------------------------------------------
 // NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
 // ------------------------------------------
-app.get("/calendly-booked", async (req, res) => {
+app.get("/calendly", async (req, res) => {
     console.log("🔎 Calendly redirect received:", req.query);
 
     // Calendly sends these exact params:
