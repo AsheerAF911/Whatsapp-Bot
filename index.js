@@ -117,40 +117,68 @@ Thank you!`
 // ------------------------------------------------
 
 app.post("/intake-webhook", async (req, res) => {
-    try {
-    const formData = req.body.data; // MakeForm sends data inside req.body.data
+    console.log("📥 Intake Webhook Payload:", req.body);
 
-    // Helper: convert array -> object
-    const formatted = {};
-    formData.forEach(item => {
-      formatted[item.name] = item;
-    });
+    const formData = req.body.data;
 
-    const fullName = formatted["Full Name"]?.value;
-    const email = formatted["Email Address"]?.value;
-    const countryCode = formatted["Phone Number"]?.countryCode;
-    const phone = formatted["Phone Number"]?.phoneNumber;
-    const finalPhone = countryCode && phone ? `${countryCode}${phone}` : null;
-
-    console.log("Extracted intake data:", { fullName, email, finalPhone });
-
-    if (!finalPhone) {
-      console.log("❌ No phone number found in intake form payload");
-      return res.status(400).json({ error: "No phone number found" });
+    if (!formData) {
+        return res.send("❌ No intake data received!");
     }
 
-    // ---------- SEND WHATSAPP NOTIFICATION ----------
-    await sendWhatsAppMessage({
-      number: finalPhone,
-      message: `Hi ${fullName}, your intake form was received successfully! Our team will review it before your session.`
+    // Convert array into object for easy lookup
+    const formatted = {};
+    formData.forEach(item => {
+        formatted[item.name] = item;
     });
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error handling intake webhook:", err);
-    res.status(500).send("Server error");
-  }
+    const name = formatted["Full Name"]?.value;
+    const email = formatted["Email Address"]?.value;
+    const countryCode = formatted["Phone Number"]?.countryCode;
+    const phoneNumber = formatted["Phone Number"]?.phoneNumber;
+
+    if (!countryCode || !phoneNumber) {
+        console.log("❌ Phone missing in intake form");
+        return res.send("❌ Phone number missing in intake form!");
+    }
+
+    const finalPhone = `${countryCode}${phoneNumber}`; // WhatsApp-ready format
+
+    console.log("📞 Extracted Phone:", finalPhone);
+
+    try {
+        await axios.post(
+            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
+            {
+                messaging_product: "whatsapp",
+                to: finalPhone,
+                type: "text",
+                text: {
+                    body: `Hi ${name}! 👋  
+Your intake form was received successfully.  
+
+Our team will review your information before the consultation.  
+Thank you for completing it! 🙌`
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                }
+            }
+        );
+
+        console.log("✅ Intake confirmation sent to:", finalPhone);
+        res.send("🎉 Intake WhatsApp confirmation sent!");
+
+    } catch (error) {
+        console.error("❌ WhatsApp Intake Error:", error.response?.data || error);
+        res.send("Error sending Intake WhatsApp message");
+    }
 });
+
+
+
 
 
 // --------------------------
