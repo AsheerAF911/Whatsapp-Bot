@@ -118,59 +118,38 @@ Thank you!`
 
 app.post("/intake-webhook", async (req, res) => {
     try {
-        console.log("📩 Intake Webhook Data:", req.body);
+    const formData = req.body.data; // MakeForm sends data inside req.body.data
 
-        const fields = req.body; // MakeForm sends an array
+    // Helper: convert array -> object
+    const formatted = {};
+    formData.forEach(item => {
+      formatted[item.name] = item;
+    });
 
-        // Helper function to find a field by its name
-        const getValue = (fieldName) => {
-            const field = fields.find(f => f.name.toLowerCase() === fieldName.toLowerCase());
-            return field?.value || null;
-        };
+    const fullName = formatted["Full Name"]?.value;
+    const email = formatted["Email Address"]?.value;
+    const countryCode = formatted["Phone Number"]?.countryCode;
+    const phone = formatted["Phone Number"]?.phoneNumber;
+    const finalPhone = countryCode && phone ? `${countryCode}${phone}` : null;
 
-        // Extract required fields
-        const fullName = getValue("Full Name") || "there";
-        const rawPhone = getValue("Phone Number");
+    console.log("Extracted intake data:", { fullName, email, finalPhone });
 
-        if (!rawPhone) {
-            console.log("❌ No phone number found");
-            return res.status(200).send("Phone missing");
-        }
-
-        // Clean phone number (remove +, spaces, special chars)
-        const phone = rawPhone.replace(/\D/g, "");
-
-        console.log("📞 Sending WhatsApp to:", phone);
-
-        // Send WhatsApp message
-        await axios.post(
-            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
-            {
-                messaging_product: "whatsapp",
-                to: phone,
-                type: "text",
-                text: {
-                    body: `Hi ${fullName}! 👋  
-Your medical intake form was submitted successfully.
-
-📝 Our clinician will review your details before your consultation.
-
-If you need help, just reply here.`
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
-            }
-        );
-
-        res.send("WhatsApp confirmation sent!");
-    } catch (error) {
-        console.error("❌ Intake Webhook Error:", error.response?.data || error);
-        res.status(500).send("Error handling intake form");
+    if (!finalPhone) {
+      console.log("❌ No phone number found in intake form payload");
+      return res.status(400).json({ error: "No phone number found" });
     }
+
+    // ---------- SEND WHATSAPP NOTIFICATION ----------
+    await sendWhatsAppMessage({
+      number: finalPhone,
+      message: `Hi ${fullName}, your intake form was received successfully! Our team will review it before your session.`
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error handling intake webhook:", err);
+    res.status(500).send("Server error");
+  }
 });
 
 
