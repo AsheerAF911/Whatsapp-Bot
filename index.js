@@ -92,7 +92,7 @@ app.get("/calendly", async (req, res) => {
 Your consultation is confirmed.
 
 Before your session, complete this intake form:
-👉 {{INTAKE_FORM_LINK}}
+👉 https://in.makeforms.co/12jwuip
 
 Thank you!`
                 }
@@ -111,6 +111,68 @@ Thank you!`
         res.send("Error sending WhatsApp message");
     }
 });
+
+// ------------------------------------------------
+// NEW: INTAKE FORM SUBMISSION CONFIRMATION WEBHOOK
+// ------------------------------------------------
+
+app.post("/intake-webhook", async (req, res) => {
+    try {
+        console.log("📩 Intake Webhook Data:", req.body);
+
+        const fields = req.body; // MakeForm sends an array
+
+        // Helper function to find a field by its name
+        const getValue = (fieldName) => {
+            const field = fields.find(f => f.name.toLowerCase() === fieldName.toLowerCase());
+            return field?.value || null;
+        };
+
+        // Extract required fields
+        const fullName = getValue("Full Name") || "there";
+        const rawPhone = getValue("Phone Number");
+
+        if (!rawPhone) {
+            console.log("❌ No phone number found");
+            return res.status(200).send("Phone missing");
+        }
+
+        // Clean phone number (remove +, spaces, special chars)
+        const phone = rawPhone.replace(/\D/g, "");
+
+        console.log("📞 Sending WhatsApp to:", phone);
+
+        // Send WhatsApp message
+        await axios.post(
+            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
+            {
+                messaging_product: "whatsapp",
+                to: phone,
+                type: "text",
+                text: {
+                    body: `Hi ${fullName}! 👋  
+Your medical intake form was submitted successfully.
+
+📝 Our clinician will review your details before your consultation.
+
+If you need help, just reply here.`
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                }
+            }
+        );
+
+        res.send("WhatsApp confirmation sent!");
+    } catch (error) {
+        console.error("❌ Intake Webhook Error:", error.response?.data || error);
+        res.status(500).send("Error handling intake form");
+    }
+});
+
 
 // --------------------------
 // SERVER START
