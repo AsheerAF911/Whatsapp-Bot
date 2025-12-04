@@ -121,6 +121,19 @@ app.post("/intake-webhook", async (req, res) => {
 
     const formData = req.body.data;
 
+    const fullName = data["Full Name"] || "";
+    const phone = data["Phone Number"] || "";
+    const email = data["Email"] || "";
+    const dob = data["Date of Birth"] || "";
+    const address = data["Residential Address"] || "";
+
+    const insuranceFormUrl = `https://in.makeforms.co/bmd61p5?` +
+      `fullName=${encodeURIComponent(fullName)}` +
+      `&phone=${encodeURIComponent(phone)}` +
+      `&email=${encodeURIComponent(email)}` +
+      `&dob=${encodeURIComponent(dob)}` +
+      `&address=${encodeURIComponent(address)}`;
+
     if (!formData) {
         return res.send("❌ No intake data received!");
     }
@@ -132,7 +145,7 @@ app.post("/intake-webhook", async (req, res) => {
     });
 
     const name = formatted["Full Name"]?.value;
-    const email = formatted["Email Address"]?.value;
+    email = formatted["Email Address"]?.value;
     const countryCode = formatted["Phone Number"]?.countryCode;
     const phoneNumber = formatted["Phone Number"]?.phoneNumber;
 
@@ -150,35 +163,73 @@ app.post("/intake-webhook", async (req, res) => {
             `https://graph.facebook.com/v17.0/${phoneID}/messages`,
             {
                 messaging_product: "whatsapp",
-                to: finalPhone,
-                type: "text",
-                text: {
-                    body: `Hi ${name}! 👋  
-Your intake form was received successfully.  
+        to: phone,
+        type: "text",
+        text: {
+          body:
+            `Thank you for completing your intake form.\n\n` +
+            `To complete your registration, please fill your insurance details here:\n${insuranceFormUrl}\n\n` +
+            `This link is pre-filled with your information but you can edit anything.`
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
 
-Our team will review your information before the consultation.  
-Thank you for completing it! 🙌`
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
-            }
-        );
-
-        console.log("✅ Intake confirmation sent to:", finalPhone);
-        res.send("🎉 Intake WhatsApp confirmation sent!");
-
-    } catch (error) {
-        console.error("❌ WhatsApp Intake Error:", error.response?.data || error);
-        res.send("Error sending Intake WhatsApp message");
-    }
+    res.status(200).send("Insurance form link sent successfully");
+    
+  } catch (err) {
+    console.error("Error sending insurance form link:", err);
+    res.status(500).send("Error");
+  }
 });
 
+// -----------------------------------------
+// Insurance Form Submission
+// ----------------------------------------
 
+app.post("/webhook/insurance-submitted", async (req, res) => {
+  try {
+    const data = req.body;
 
+    const fullName = data["Full Name"] || "";
+    const phone = data["Phone Number"] || "";
+    const insuranceCompany = data["Insurance Company Name"] || "";
+    const policyNumber = data["Policy Number"] || "";
+
+    await axios.post(
+      "https://graph.facebook.com/v17.0/${phoneID}/messages",
+      {
+        messaging_product: "whatsapp",
+        to: phone,
+        type: "text",
+        text: {
+          body:
+            `Hi ${fullName}, your insurance information has been submitted successfully.\n\n` +
+            `• Insurance Company: ${insuranceCompany}\n` +
+            `• Policy Number: ${policyNumber}\n\n` +
+            `Our team will verify your coverage and update you shortly.`
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    res.status(200).send("Insurance submission confirmation sent.");
+
+  } catch (err) {
+    console.error("Error sending insurance confirmation:", err);
+    res.status(500).send("Error");
+  }
+});
 
 
 // --------------------------
