@@ -72,7 +72,7 @@ app.get("/calendly", async (req, res) => {
     console.log("📅 Calendly Redirect Data:", req.query);
 
     const name = req.query.invitee_full_name;
-    const phoneRaw = req.query.answer_1; // phone question in Calendly
+    const phoneRaw = req.query.answer_2; // phone question in Calendly
 
     if (!phoneRaw) {
         return res.send("❌ Phone number missing from Calendly");
