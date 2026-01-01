@@ -92,7 +92,7 @@ app.get("/calendly", async (req, res) => {
 Your consultation is confirmed.
 
 Before your session, complete this intake form:
-👉 https://in.makeforms.co/12jwuip
+👉 https://tally.so/r/0Q757Z
 
 Thank you!`
                 }
