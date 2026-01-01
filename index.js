@@ -71,18 +71,19 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 app.get("/calendly", async (req, res) => {
     console.log("🔍 Calendly Redirect Query:", req.query);
 
-    const name = req.query.invitee_full_name;
-    const phoneRaw = req.query.answer_1;  // Calendly sent phone here
+    const name = req.query.invitee_full_name || "there";
+    const phoneRaw = req.query.text_reminder_number;
 
     if (!phoneRaw) {
-        return res.send("❌ Phone number missing from query!");
+        console.log("❌ Phone number missing from Calendly");
+        return res.send("Booking confirmed! We’ll contact you shortly.");
     }
 
-    const phone = phoneRaw.replace(/\D/g, ""); // clean into WhatsApp format
+    const phone = phoneRaw.replace(/\D/g, "");
 
     try {
         await axios.post(
-            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
+            `https://graph.facebook.com/v20.0/${phoneID}/messages`,
             {
                 messaging_product: "whatsapp",
                 to: phone,
@@ -91,10 +92,10 @@ app.get("/calendly", async (req, res) => {
                     body: `Hi ${name}! 👋  
 Your consultation is confirmed.
 
-Before your session, complete this intake form:
-👉 https://tally.so/r/0Q757Z
+Next step: please complete your intake form:
+👉 https://tally.so/r/INTAKE_FORM_ID
 
-Thank you!`
+Looking forward to meeting you!`
                 }
             },
             {
@@ -105,10 +106,12 @@ Thank you!`
             }
         );
 
-        res.send("🎉 WhatsApp confirmation sent!");
+        console.log("✅ Calendly WhatsApp sent to", phone);
+        res.send("🎉 Booking confirmed! Check WhatsApp.");
+
     } catch (error) {
         console.error("❌ WhatsApp Error:", error.response?.data || error);
-        res.send("Error sending WhatsApp message");
+        res.send("Booking confirmed!");
     }
 });
 
