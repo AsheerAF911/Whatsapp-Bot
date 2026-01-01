@@ -69,33 +69,35 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 // NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
 // ------------------------------------------
 app.get("/calendly", async (req, res) => {
-    console.log("🔍 Calendly Redirect Query:", req.query);
+    console.log("📅 Calendly Redirect Data:", req.query);
 
-    const name = req.query.invitee_full_name || "there";
-    const phoneRaw = req.query.text_reminder_number;
+    const name = req.query.invitee_full_name;
+    const phoneRaw = req.query.answer_1; // phone question in Calendly
 
     if (!phoneRaw) {
-        console.log("❌ Phone number missing from Calendly");
-        return res.send("Booking confirmed! We’ll contact you shortly.");
+        return res.send("❌ Phone number missing from Calendly");
     }
 
+    // Clean phone number for WhatsApp
     const phone = phoneRaw.replace(/\D/g, "");
 
     try {
         await axios.post(
-            `https://graph.facebook.com/v20.0/${phoneID}/messages`,
+            `https://graph.facebook.com/v18.0/${phoneID}/messages`,
             {
                 messaging_product: "whatsapp",
                 to: phone,
                 type: "text",
                 text: {
                     body: `Hi ${name}! 👋  
-Your consultation is confirmed.
 
-Next step: please complete your intake form:
-👉 https://tally.so/r/INTAKE_FORM_ID
+Your consultation is confirmed ✅  
 
-Looking forward to meeting you!`
+Please complete this short form before your session:
+👉 https://tally.so/r/0Q757Z  
+
+This helps us prepare better for you.
+Thank you!`
                 }
             },
             {
@@ -106,14 +108,15 @@ Looking forward to meeting you!`
             }
         );
 
-        console.log("✅ Calendly WhatsApp sent to", phone);
-        res.send("🎉 Booking confirmed! Check WhatsApp.");
+        console.log("✅ WhatsApp message sent to", phone);
+        res.send("🎉 Confirmation sent on WhatsApp!");
 
     } catch (error) {
         console.error("❌ WhatsApp Error:", error.response?.data || error);
-        res.send("Booking confirmed!");
+        res.send("Error sending WhatsApp message");
     }
 });
+
 
 // ------------------------------------------------
 // NEW: INTAKE FORM SUBMISSION CONFIRMATION WEBHOOK
