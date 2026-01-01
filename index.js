@@ -68,7 +68,7 @@ Once you book, you'll receive a confirmation + secure intake form here on WhatsA
 // ------------------------------------------
 // NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
 // ------------------------------------------
-app.get("/calendly", async (req, res) => {
+/*app.get("/calendly", async (req, res) => {
     console.log("📅 Calendly Redirect Data:", req.query);
 
     const name = req.query.invitee_full_name;
@@ -115,6 +115,13 @@ Thank you!`
         console.error("❌ WhatsApp Error:", error.response?.data || error);
         res.send("Error sending WhatsApp message");
     }
+});*/
+
+app.get("/calendly", (req, res) => {
+  console.log("🔥 CALENDLY ROUTE HIT 🔥");
+  console.log("QUERY:", req.query);
+
+  res.send("Calendly route working");
 });
 
 
