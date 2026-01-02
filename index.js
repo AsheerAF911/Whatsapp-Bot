@@ -46,6 +46,8 @@ app.post("/webhook", async (req, res) => {
 You can instantly book your consultation here:
 📅 https://calendly.com/asheeraf007/30min
 
+Please complete this short form before your session:
+👉 https://tally.so/r/0Q757Z 
 Once you book, you'll receive a confirmation + secure intake form here on WhatsApp.`
                 }
             },
@@ -116,13 +118,6 @@ Thank you!`
         res.send("Error sending WhatsApp message");
     }
 });*/
-
-app.get("/calendly", (req, res) => {
-  console.log("🔥 CALENDLY ROUTE HIT 🔥");
-  console.log("QUERY:", req.query);
-
-  res.send("Calendly route working");
-});
 
 
 // ------------------------------------------------
