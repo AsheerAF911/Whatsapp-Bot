@@ -23,6 +23,8 @@ app.get("/webhook", (req, res) => {
 // META INCOMING MESSAGES
 // --------------------------
 app.post("/webhook", async (req, res) => {
+    console.log("📩 WEBHOOK RECEIVED:");
+    console.log(JSON.stringify(req.body, null, 2));
     try {
         const change = req.body.entry?.[0]?.changes?.[0]?.value;
 
