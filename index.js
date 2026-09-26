@@ -294,7 +294,7 @@ If you need help, just reply to this message.`
                         body:
 `Please complete your latest patient check-in here:
 
-👉 YOUR_CHECKIN_FORM_LINK
+👉 https://tally.so/r/2EBgP9
 
 Your update will be shared with the clinic team.`
                     }
