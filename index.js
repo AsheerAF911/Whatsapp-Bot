@@ -9,22 +9,94 @@ const token = process.env.WHATSAPP_TOKEN;
 const phoneID = process.env.PHONE_NUMBER_ID;
 const verifyToken = process.env.VERIFY_TOKEN;
 
-// --------------------------
+// Prefer keeping Graph API version in env too
+const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v23.0";
+
+// ----------------------------------
+// HELPER: SEND WHATSAPP MESSAGE
+// ----------------------------------
+async function sendWhatsAppMessage(to, payload) {
+    return axios.post(
+        `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneID}/messages`,
+        {
+            messaging_product: "whatsapp",
+            to,
+            ...payload
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json"
+            }
+        }
+    );
+}
+
+// ----------------------------------
 // META WEBHOOK VERIFICATION
-// --------------------------
+// ----------------------------------
 app.get("/webhook", (req, res) => {
     if (req.query["hub.verify_token"] === verifyToken) {
         return res.send(req.query["hub.challenge"]);
     }
-    res.send("Error");
+
+    return res.status(403).send("Error");
 });
 
-// --------------------------
+// ----------------------------------
+// SEND MAIN MENU
+// ----------------------------------
+async function sendMainMenu(to) {
+    await sendWhatsAppMessage(to, {
+        type: "interactive",
+
+        interactive: {
+            type: "button",
+
+            body: {
+                text:
+`Hi! 👋 Welcome to our clinic.
+
+How can we help you today?`
+            },
+
+            action: {
+                buttons: [
+                    {
+                        type: "reply",
+                        reply: {
+                            id: "book_appointment",
+                            title: "Book Appointment"
+                        }
+                    },
+                    {
+                        type: "reply",
+                        reply: {
+                            id: "ask_question",
+                            title: "Ask a Question"
+                        }
+                    },
+                    {
+                        type: "reply",
+                        reply: {
+                            id: "existing_patient",
+                            title: "Existing Patient"
+                        }
+                    }
+                ]
+            }
+        }
+    });
+}
+
+// ----------------------------------
 // META INCOMING MESSAGES
-// --------------------------
+// ----------------------------------
 app.post("/webhook", async (req, res) => {
+
     console.log("📩 WEBHOOK RECEIVED:");
     console.log(JSON.stringify(req.body, null, 2));
+
     try {
         const change = req.body.entry?.[0]?.changes?.[0]?.value;
 
@@ -35,255 +107,237 @@ app.post("/webhook", async (req, res) => {
         const message = change.messages[0];
         const from = message.from;
 
-        // SEND WELCOME MESSAGE WITH CALENDLY LINK
-        await axios.post(
-            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
-            {
-                messaging_product: "whatsapp",
-                to: from,
-                type: "text",
-                text: {
-                    body: `Hi! 👋 Thanks for reaching out.
+        // -------------------------------------------------
+        // 1. NORMAL TEXT MESSAGE
+        // -------------------------------------------------
 
-You can instantly book your consultation here:
-📅 https://calendly.com/asheeraf007/30min
+        if (message.type === "text") {
 
-Please complete this short form before your session:
-👉 https://tally.so/r/0Q757Z 
-Once you book, you'll receive a confirmation + secure intake form here on WhatsApp.`
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
+            const text = message.text?.body
+                ?.trim()
+                ?.toLowerCase();
+
+            console.log("Incoming text:", text);
+
+            // User says hi / hello
+            if (
+                text === "hi" ||
+                text === "hello" ||
+                text === "hey" ||
+                text === "start"
+            ) {
+                await sendMainMenu(from);
+                return res.sendStatus(200);
             }
-        );
 
-        res.sendStatus(200);
-    } catch (error) {
-        console.error("❌ Error:", error?.response?.data || error);
-        res.sendStatus(500);
-    }
-});
-
-
-// ------------------------------------------
-// NEW: CALENDLY BOOKING CONFIRMATION WEBHOOK
-// ------------------------------------------
-/*app.get("/calendly", async (req, res) => {
-    console.log("📅 Calendly Redirect Data:", req.query);
-
-    const name = req.query.invitee_full_name;
-    const phoneRaw = req.query.answer_2; // phone question in Calendly
-
-    if (!phoneRaw) {
-        return res.send("❌ Phone number missing from Calendly");
-    }
-
-    // Clean phone number for WhatsApp
-    const phone = phoneRaw.replace(/\D/g, "");
-
-    try {
-        await axios.post(
-            `https://graph.facebook.com/v18.0/${phoneID}/messages`,
-            {
-                messaging_product: "whatsapp",
-                to: phone,
+            // Optional fallback for any random message
+            await sendWhatsAppMessage(from, {
                 type: "text",
-                text: {
-                    body: `Hi ${name}! 👋  
 
-Your consultation is confirmed ✅  
-
-Please complete this short form before your session:
-👉 https://tally.so/r/0Q757Z  
-
-This helps us prepare better for you.
-Thank you!`
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
-            }
-        );
-
-        console.log("✅ WhatsApp message sent to", phone);
-        res.send("🎉 Confirmation sent on WhatsApp!");
-
-    } catch (error) {
-        console.error("❌ WhatsApp Error:", error.response?.data || error);
-        res.send("Error sending WhatsApp message");
-    }
-});*/
-
-
-// ------------------------------------------------
-// NEW: INTAKE FORM SUBMISSION CONFIRMATION WEBHOOK
-// ------------------------------------------------
-
-app.post("/intake-webhook", async (req, res) => {
-    console.log("📥 Intake Webhook Payload:", req.body);
-
-    const formData = req.body.data;
-
-    if (!formData) {
-        return res.send("❌ No intake data received!");
-    }
-
-    // Convert array → object
-    const formatted = {};
-    formData.forEach(item => {
-        formatted[item.name] = item;
-    });
-
-    const name = formatted["Full Name"]?.value || "";
-    const email = formatted["Email Address"]?.value || "";
-    const countryCode = formatted["Phone Number"]?.countryCode;
-    const phoneNumber = formatted["Phone Number"]?.phoneNumber;
-    const address = formatted["Home Address"]?.value || "";
-    const dob = formatted["Date of Birth"]?.value || "";
-
-    if (!countryCode || !phoneNumber) {
-        console.log("❌ Phone missing in intake form");
-        return res.send("❌ Phone number missing in intake form!");
-    }
-
-    const finalPhone = `${countryCode}${phoneNumber}`;
-
-    // ----- BUILD INSURANCE FORM PREFILL URL -----
-
-    const insuranceFormBase = "https://in.makeforms.co/bmd61p5"; // CHANGE THIS
-
-    const prefillParams = new URLSearchParams({
-        "Full Name": name,
-        "Email": email,
-        "Phone Number": countryCode + phoneNumber,
-        "Residential Address": address,
-        "Date of Birth": dob
-    });
-
-    const insuranceFormURL = `${insuranceFormBase}?${prefillParams.toString()}`;
-
-    console.log("🔗 Prefilled Insurance Form URL:", insuranceFormURL);
-
-    try {
-        // ----- SEND WHATSAPP -----
-
-        await axios.post(
-            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
-            {
-                messaging_product: "whatsapp",
-                to: finalPhone,
-                type: "text",
                 text: {
                     body:
-`Hi ${name}! 👋  
-Your intake form was received successfully. 🙌  
+`Thanks for reaching out.
 
-Next step: please complete your insurance verification form (auto-filled for your convenience):
-
-👉 ${insuranceFormURL}
-
-This helps us verify your eligibility before the consultation.`
+Please send *Hi* to open the clinic menu.`
                 }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
+            });
+
+            return res.sendStatus(200);
+        }
+
+        // -------------------------------------------------
+        // 2. BUTTON RESPONSE
+        // -------------------------------------------------
+
+        if (
+            message.type === "interactive" &&
+            message.interactive?.type === "button_reply"
+        ) {
+
+            const buttonId =
+                message.interactive.button_reply.id;
+
+            console.log("Button selected:", buttonId);
+
+            // ----------------------------------
+            // BOOK APPOINTMENT
+            // ----------------------------------
+
+            if (buttonId === "book_appointment") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "text",
+
+                    text: {
+                        body:
+`Great! 📅
+
+You can book your consultation here:
+
+👉 https://calendly.com/asheeraf007/30min
+
+After booking, please complete this short intake form:
+
+👉 https://tally.so/r/0Q757Z
+
+This helps the doctor prepare before your consultation.`
+                    }
+                });
+
+                return res.sendStatus(200);
             }
-        );
 
-        console.log("✅ Intake confirmation sent with insurance form link:", finalPhone);
-        res.send("🎉 Intake WhatsApp + Insurance Form link sent!");
+            // ----------------------------------
+            // ASK A QUESTION
+            // ----------------------------------
+
+            if (buttonId === "ask_question") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "text",
+
+                    text: {
+                        body:
+`Sure 😊
+
+Please type your question here.
+
+Our clinic team will review it and get back to you as soon as possible.`
+                    }
+                });
+
+                return res.sendStatus(200);
+            }
+
+            // ----------------------------------
+            // EXISTING PATIENT
+            // ----------------------------------
+
+            if (buttonId === "existing_patient") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "interactive",
+
+                    interactive: {
+                        type: "button",
+
+                        body: {
+                            text:
+`Welcome back 👋
+
+What would you like help with?`
+                        },
+
+                        action: {
+                            buttons: [
+                                {
+                                    type: "reply",
+                                    reply: {
+                                        id: "existing_followup",
+                                        title: "Follow-up"
+                                    }
+                                },
+                                {
+                                    type: "reply",
+                                    reply: {
+                                        id: "existing_checkin",
+                                        title: "Check-in"
+                                    }
+                                },
+                                {
+                                    type: "reply",
+                                    reply: {
+                                        id: "existing_support",
+                                        title: "Talk to Clinic"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                });
+
+                return res.sendStatus(200);
+            }
+
+            // ----------------------------------
+            // EXISTING PATIENT → FOLLOW-UP
+            // ----------------------------------
+
+            if (buttonId === "existing_followup") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "text",
+
+                    text: {
+                        body:
+`You can request your follow-up here:
+
+👉 YOUR_FOLLOWUP_LINK
+
+If you need help, just reply to this message.`
+                    }
+                });
+
+                return res.sendStatus(200);
+            }
+
+            // ----------------------------------
+            // EXISTING PATIENT → CHECK-IN
+            // ----------------------------------
+
+            if (buttonId === "existing_checkin") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "text",
+
+                    text: {
+                        body:
+`Please complete your latest patient check-in here:
+
+👉 YOUR_CHECKIN_FORM_LINK
+
+Your update will be shared with the clinic team.`
+                    }
+                });
+
+                return res.sendStatus(200);
+            }
+
+            // ----------------------------------
+            // EXISTING PATIENT → TALK TO CLINIC
+            // ----------------------------------
+
+            if (buttonId === "existing_support") {
+
+                await sendWhatsAppMessage(from, {
+                    type: "text",
+
+                    text: {
+                        body:
+`Of course.
+
+Please type your message below and our clinic team will respond as soon as possible.`
+                    }
+                });
+
+                return res.sendStatus(200);
+            }
+        }
+
+        return res.sendStatus(200);
 
     } catch (error) {
-        console.error("❌ WhatsApp Intake Error:", error.response?.data || error);
-        res.send("Error sending Intake WhatsApp message");
-    }
-});
 
+        console.error("❌ WEBHOOK ERROR");
 
-app.post("/insurance-webhook", async (req, res) => {
-    console.log("📥 Insurance Webhook Payload:", req.body);
-
-    const formData = req.body.data;
-
-    if (!formData) {
-        return res.send("❌ No insurance form data received!");
-    }
-
-    // Convert array into lookup object
-    const formatted = {};
-    formData.forEach(item => {
-        formatted[item.name] = item;
-    });
-
-    const name = formatted["Full Name"]?.value;
-    const countryCode = formatted["Phone Number"]?.countryCode;
-    const phoneNumber = formatted["Phone Number"]?.phoneNumber;
-
-    const insuranceCompany = formatted["Insurance Company Name"]?.value;
-    const policyNumber = formatted["Policy Number"]?.value;
-
-    if (!countryCode || !phoneNumber) {
-        console.log("❌ Phone missing in insurance form");
-        return res.send("❌ Phone number missing in insurance form!");
-    }
-
-    const finalPhone = `${countryCode}${phoneNumber}`; // WhatsApp-ready
-    console.log("📞 Extracted Phone:", finalPhone);
-
-    try {
-        await axios.post(
-            `https://graph.facebook.com/v17.0/${phoneID}/messages`,
-            {
-                messaging_product: "whatsapp",
-                to: finalPhone,
-                type: "text",
-                text: {
-                    body:
-`Hi ${name}! 👋  
-Your insurance details were received successfully.
-
-📄 *Insurance Company:* ${insuranceCompany || "Not provided"}
-🆔 *Policy Number:* ${policyNumber || "Not provided"}
-
-Our team will verify your coverage and update you soon.`
-                }
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                }
-            }
+        console.error(
+            JSON.stringify(
+                error.response?.data || error.message,
+                null,
+                2
+            )
         );
 
-        console.log("✅ Insurance confirmation sent to:", finalPhone);
-        res.send("🎉 Insurance WhatsApp confirmation sent!");
-
-    } catch (error) {
-        console.error("❌ WhatsApp Insurance Error:", error.response?.data || error);
-        res.send("Error sending Insurance WhatsApp message");
+        return res.sendStatus(500);
     }
 });
-
-
-
-
-// --------------------------
-// SERVER START
-// --------------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Bot running on " + PORT));
-
-//EAAKQjxn2zaMBQBvSiMnHJtlfZAiw7tIft9abQ7ePmV6rsoxMZBohJEIr87ebpLPZAf2ZA4lsyfKsubAtizz0pvUhQvJkKMbHtNCMnZBaW5A4vz779ZBNz0DqOAALQz1Q2FXtexJM5fchVLrv4MZBqoHM1gZBHs1ooYktZCNJIykZCE53qAEBeZCmiyDGHVujHON1Xo5AM6Lsp7pBZAeiyFwKjaXyOUhHExbe3DwgWTRGL60TezkC3F8cQroEqxK0jJvxLXEArC9py9MRl5YvEkbP3j8ZB
-
-//calendly token: eyJraWQiOiIxY2UxZTEzNjE3ZGNmNzY2YjNjZWJjY2Y4ZGM1YmFmYThhNjVlNjg0MDIzZjdjMzJiZTgzNDliMjM4MDEzNWI0IiwidHlwIjoiUEFUIiwiYWxnIjoiRVMyNTYifQ.eyJpc3MiOiJodHRwczovL2F1dGguY2FsZW5kbHkuY29tIiwiaWF0IjoxNzY0NTI1ODgwLCJqdGkiOiIxNTBhN2U5Yi04MmJhLTQ3MjItYTQwYy01NWViODgzNjI2NjAiLCJ1c2VyX3V1aWQiOiI2YzU5N2IzYy02NzYzLTQxODktOGRkNi01M2E0NTc5MzgzYWYifQ.AtNgcFjTLNynUy9mxmh7bZ9UYpocMc4yQGzI0O9sYnALidmW8WEgvvmDk0hhHdT8dQBLOva9w0GFVCddlIPx1A
