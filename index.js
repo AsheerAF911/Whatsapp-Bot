@@ -341,3 +341,19 @@ Please type your message below and our clinic team will respond as soon as possi
         return res.sendStatus(500);
     }
 });
+
+// --------------------------
+// HEALTH CHECK
+// --------------------------
+app.get("/", (req, res) => {
+    res.status(200).send("WhatsApp Clinic Bot is running ✅");
+});
+
+// --------------------------
+// SERVER START
+// --------------------------
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Bot running on port ${PORT}`);
+});
