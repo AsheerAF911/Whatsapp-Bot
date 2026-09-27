@@ -76,13 +76,13 @@ How can we help you today?`
                             title: "Ask a Question"
                         }
                     },
-                    {
-                        type: "reply",
-                        reply: {
-                            id: "existing_patient",
-                            title: "Existing Patient"
-                        }
-                    }
+                    // {
+                    //     type: "reply",
+                    //     reply: {
+                    //         id: "existing_patient",
+                    //         title: "Existing Patient"
+                    //     }
+                    // }
                 ]
             }
         }
@@ -187,27 +187,27 @@ This helps the doctor prepare before your consultation.`
                 return res.sendStatus(200);
             }
 
-            // ----------------------------------
-            // ASK A QUESTION
-            // ----------------------------------
+//             // ----------------------------------
+//             // ASK A QUESTION
+//             // ----------------------------------
 
-            if (buttonId === "ask_question") {
+//             if (buttonId === "ask_question") {
 
-                await sendWhatsAppMessage(from, {
-                    type: "text",
+//                 await sendWhatsAppMessage(from, {
+//                     type: "text",
 
-                    text: {
-                        body:
-`Sure 😊
+//                     text: {
+//                         body:
+// `Sure 😊
 
-Please type your question here.
+// Please type your question here.
 
-Our clinic team will review it and get back to you as soon as possible.`
-                    }
-                });
+// Our clinic team will review it and get back to you as soon as possible.`
+//                     }
+//                 });
 
-                return res.sendStatus(200);
-            }
+//                 return res.sendStatus(200);
+//             }
 
             // ----------------------------------
             // EXISTING PATIENT
@@ -244,13 +244,13 @@ What would you like help with?`
                                         title: "Check-in"
                                     }
                                 },
-                                {
-                                    type: "reply",
-                                    reply: {
-                                        id: "existing_support",
-                                        title: "Talk to Clinic"
-                                    }
-                                }
+                                // {
+                                //     type: "reply",
+                                //     reply: {
+                                //         id: "existing_support",
+                                //         title: "Talk to Clinic"
+                                //     }
+                                // }
                             ]
                         }
                     }
@@ -303,25 +303,25 @@ Your update will be shared with the clinic team.`
                 return res.sendStatus(200);
             }
 
-            // ----------------------------------
-            // EXISTING PATIENT → TALK TO CLINIC
-            // ----------------------------------
+//             // ----------------------------------
+//             // EXISTING PATIENT → TALK TO CLINIC
+//             // ----------------------------------
 
-            if (buttonId === "existing_support") {
+//             if (buttonId === "existing_support") {
 
-                await sendWhatsAppMessage(from, {
-                    type: "text",
+//                 await sendWhatsAppMessage(from, {
+//                     type: "text",
 
-                    text: {
-                        body:
-`Of course.
+//                     text: {
+//                         body:
+// `Of course.
 
-Please type your message below and our clinic team will respond as soon as possible.`
-                    }
-                });
+// Please type your message below and our clinic team will respond as soon as possible.`
+//                     }
+//                 });
 
-                return res.sendStatus(200);
-            }
+//                 return res.sendStatus(200);
+//             }
         }
 
         return res.sendStatus(200);
