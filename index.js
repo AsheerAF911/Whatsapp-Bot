@@ -69,20 +69,20 @@ How can we help you today?`
                             title: "Book Appointment"
                         }
                     },
-                    {
-                        type: "reply",
-                        reply: {
-                            id: "ask_question",
-                            title: "Ask a Question"
-                        }
-                    },
                     // {
                     //     type: "reply",
                     //     reply: {
-                    //         id: "existing_patient",
-                    //         title: "Existing Patient"
+                    //         id: "ask_question",
+                    //         title: "Ask a Question"
                     //     }
-                    // }
+                    // },
+                    {
+                        type: "reply",
+                        reply: {
+                            id: "existing_patient",
+                            title: "Existing Patient"
+                        }
+                    }
                 ]
             }
         }
