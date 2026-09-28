@@ -33,9 +33,9 @@ const NOTION_CHECKINS_DATA_SOURCE_ID =
 
 
 // EXTERNAL LINKS
-const CALENDLY_URL =
-    process.env.CALENDLY_URL ||
-    "https://calendly.com/asheeraf007/30min";
+const GOOGLE_URL =
+    process.env.GOOGLE_BOOKING_URL ||
+    "https://calendar.app.google/FHcgeVLDPfEyf61Q6";
 
 const INTAKE_FORM_URL =
     process.env.INTAKE_FORM_URL ||
@@ -774,56 +774,47 @@ Please send *Hi* to open the clinic menu.`
                 // Patient Stage = New Lead
                 // -----------------------------------------
 
-                try {
+                 try {
 
-                    console.log("🟡 Trying to create/find patient in Notion...");
+                    console.log(
+                        "🟡 Creating/finding patient in Notion..."
+                    );
 
                     const patient = await ensureNewLead(from);
 
-                    console.log("✅ NOTION SUCCESS");
-                    console.log("Patient page ID:", patient?.id);
+                    console.log(
+                        "✅ Patient ready in Notion:",
+                        patient?.id
+                    );
 
                 } catch (error) {
 
-                    console.error("❌ NOTION CREATION FAILED");
-
                     console.error(
-                        "Status:",
-                        error.status || error.code
+                        "❌ NOTION LEAD CREATION FAILED"
                     );
 
                     console.error(
-                        "Message:",
-                        error.message
-                    );
-
-                    console.error(
-                        "Body:",
-                        JSON.stringify(
-                            error.body || error,
-                            null,
-                            2
-                        )
+                        error.body || error.message
                     );
                 }
 
 
-                await sendWhatsAppMessage(
-                    from,
-                    {
+                await sendWhatsAppMessage(from, {
 
-                        type: "text",
+                    type: "text",
 
-                        text: {
+                    text: {
 
-                            body:
-`Great! 📅
+                        body:
+                        `Great! 📅
 
-You can book your consultation here:
+                        Choose a convenient consultation slot here:
 
-👉 ${CALENDLY_URL}
+                        👉 ${GOOGLE_BOOKING_URL}
 
-Once your appointment is confirmed, we'll send you the next step here on WhatsApp.`
+                        You'll only see the practitioner's available times.
+
+                        Once your appointment is booked, we'll update your clinic record automatically.`
                         }
                     }
                 );
