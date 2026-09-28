@@ -776,17 +776,34 @@ Please send *Hi* to open the clinic menu.`
 
                 try {
 
-                    await ensureNewLead(from);
+                    console.log("🟡 Trying to create/find patient in Notion...");
+
+                    const patient = await ensureNewLead(from);
+
+                    console.log("✅ NOTION SUCCESS");
+                    console.log("Patient page ID:", patient?.id);
 
                 } catch (error) {
 
-                    // We still send the booking link
-                    // even if Notion temporarily fails.
+                    console.error("❌ NOTION CREATION FAILED");
 
                     console.error(
-                        "❌ Notion lead creation failed:",
-                        error.body ||
+                        "Status:",
+                        error.status || error.code
+                    );
+
+                    console.error(
+                        "Message:",
                         error.message
+                    );
+
+                    console.error(
+                        "Body:",
+                        JSON.stringify(
+                            error.body || error,
+                            null,
+                            2
+                        )
                     );
                 }
 
