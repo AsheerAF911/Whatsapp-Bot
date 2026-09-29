@@ -5,6 +5,8 @@ const { Client } = require("@notionhq/client");
 const app = express();
 app.use(express.json());
 
+const { google } = require("googleapis");
+
 
 // ======================================================
 // ENVIRONMENT VARIABLES
@@ -36,6 +38,18 @@ const NOTION_CHECKINS_DATA_SOURCE_ID =
 const GOOGLE_BOOKING_URL =
     process.env.GOOGLE_BOOKING_URL ||
     "https://calendar.app.google/FHcgeVLDPfEyf61Q6";
+
+const googleOAuthClient =
+    new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+    );
+
+const calendar = google.calendar({
+    version: "v3",
+    auth: googleOAuthClient
+});
 
 const INTAKE_FORM_URL =
     process.env.INTAKE_FORM_URL ||
@@ -90,6 +104,7 @@ const CHECKIN = {
     submittedAt: "Submitted At",
     summary: "Response Summary"
 };
+
 
 
 // ======================================================
@@ -1670,6 +1685,72 @@ Your check-in has been received and your practitioner will be able to review you
 
 
             return res.sendStatus(500);
+        }
+    }
+);
+
+
+// ======================================================
+// Google authorization route
+// ======================================================
+
+app.get("/google/auth", (req, res) => {
+
+    const authUrl =
+        googleOAuthClient.generateAuthUrl({
+
+            access_type: "offline",
+
+            prompt: "consent",
+
+            scope: [
+                "https://www.googleapis.com/auth/calendar.readonly"
+            ]
+        });
+
+
+    res.redirect(authUrl);
+});
+
+app.get(
+    "/google/oauth/callback",
+    async (req, res) => {
+
+        try {
+
+            const code =
+                req.query.code;
+
+
+            const {
+                tokens
+            } =
+                await googleOAuthClient
+                    .getToken(code);
+
+
+            console.log(
+                "GOOGLE TOKENS:",
+                tokens
+            );
+
+
+            res.send(
+                "Google Calendar connected. Check Render logs for refresh token."
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                "Google OAuth failed:",
+                error
+            );
+
+            res.status(500)
+                .send(
+                    "Google OAuth failed"
+                );
         }
     }
 );
