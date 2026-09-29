@@ -46,6 +46,11 @@ const googleOAuthClient =
         process.env.GOOGLE_REDIRECT_URI
     );
 
+googleOAuthClient.setCredentials({
+    refresh_token:
+        process.env.GOOGLE_REFRESH_TOKEN
+});
+
 const calendar = google.calendar({
     version: "v3",
     auth: googleOAuthClient
@@ -1820,6 +1825,77 @@ app.get("/", (req, res) => {
             "WhatsApp Clinic Automation is running ✅"
         );
 });
+
+
+app.get(
+    "/google-calendar-health",
+    async (req, res) => {
+
+        try {
+
+            const result =
+                await calendar.events.list({
+
+                    calendarId:
+                        process.env
+                            .GOOGLE_CALENDAR_ID ||
+                        "primary",
+
+                    timeMin:
+                        new Date()
+                            .toISOString(),
+
+                    maxResults: 5,
+
+                    singleEvents: true,
+
+                    orderBy: "startTime"
+                });
+
+
+            res.json({
+
+                ok: true,
+
+                events:
+                    result.data.items
+                        ?.map(event => ({
+
+                            id:
+                                event.id,
+
+                            title:
+                                event.summary,
+
+                            start:
+                                event.start,
+
+                            attendees:
+                                event.attendees
+                        }))
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                error.response?.data ||
+                error.message
+            );
+
+
+            res.status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.response?.data ||
+                        error.message
+                });
+        }
+    }
+);
 
 
 // ======================================================
