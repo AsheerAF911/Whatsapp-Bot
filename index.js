@@ -6,6 +6,7 @@ const app = express();
 app.use(express.json());
 
 const { google } = require("googleapis");
+const crypto = require("crypto");
 
 
 // ======================================================
@@ -582,6 +583,49 @@ function getFieldValue(fields, patterns) {
     );
 }
 
+async function syncRecentGoogleBookings() {
+
+    const fiveMinutesAgo =
+        new Date(
+            Date.now() -
+            5 * 60 * 1000
+        );
+
+
+    const response =
+        await calendar.events.list({
+
+            calendarId:
+                process.env
+                    .GOOGLE_CALENDAR_ID ||
+                "primary",
+
+            timeMin:
+                fiveMinutesAgo
+                    .toISOString(),
+
+            singleEvents:
+                true,
+
+            orderBy:
+                "startTime",
+
+            maxResults:
+                20
+        });
+
+
+    const events =
+        response.data.items || [];
+
+
+    for (const event of events) {
+
+        await processGoogleBooking(
+            event
+        );
+    }
+}
 
 // ======================================================
 // WHATSAPP MAIN MENU
@@ -1826,6 +1870,144 @@ app.get("/", (req, res) => {
         );
 });
 
+app.get(
+    "/google-calendar/start-watch",
+    async (req, res) => {
+
+        try {
+
+            const channelId =
+                crypto.randomUUID();
+
+
+            const response =
+                await calendar.events.watch({
+
+                    calendarId:
+                        process.env
+                            .GOOGLE_CALENDAR_ID ||
+                        "primary",
+
+                    requestBody: {
+
+                        id:
+                            channelId,
+
+                        type:
+                            "web_hook",
+
+                        address:
+                            `${process.env.PUBLIC_BASE_URL}/google-calendar-webhook`,
+
+                        token:
+                            process.env
+                                .GOOGLE_WEBHOOK_TOKEN
+                    }
+                });
+
+
+            console.log(
+                "✅ Google watch created:",
+                response.data
+            );
+
+
+            res.json({
+
+                ok: true,
+
+                channel:
+                    response.data
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Google watch failed:",
+                error.response?.data ||
+                error.message
+            );
+
+
+            res.status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.response?.data ||
+                        error.message
+                });
+        }
+    }
+);
+
+app.post(
+    "/google-calendar-webhook",
+    async (req, res) => {
+
+        // Respond quickly first.
+        res.sendStatus(200);
+
+
+        try {
+
+            const resourceState =
+                req.headers[
+                    "x-goog-resource-state"
+                ];
+
+
+            const channelToken =
+                req.headers[
+                    "x-goog-channel-token"
+                ];
+
+
+            if (
+                channelToken !==
+                process.env
+                    .GOOGLE_WEBHOOK_TOKEN
+            ) {
+
+                console.error(
+                    "❌ Invalid Google webhook token"
+                );
+
+                return;
+            }
+
+
+            if (
+                resourceState === "sync"
+            ) {
+
+                console.log(
+                    "✅ Google calendar watch initialized"
+                );
+
+                return;
+            }
+
+
+            console.log(
+                "📅 Google Calendar changed"
+            );
+
+
+            await syncRecentGoogleBookings();
+
+
+        } catch (error) {
+
+            console.error(
+                "Calendar webhook processing failed:",
+                error
+            );
+        }
+    }
+);
 
 app.get(
     "/google-calendar-health",
