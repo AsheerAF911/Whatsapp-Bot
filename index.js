@@ -33,7 +33,7 @@ const NOTION_CHECKINS_DATA_SOURCE_ID =
 
 
 // EXTERNAL LINKS
-const GOOGLE_URL =
+const GOOGLE_BOOKING_URL =
     process.env.GOOGLE_BOOKING_URL ||
     "https://calendar.app.google/FHcgeVLDPfEyf61Q6";
 
