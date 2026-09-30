@@ -627,6 +627,155 @@ async function syncRecentGoogleBookings() {
     }
 }
 
+
+async function processGoogleBooking(event) {
+
+    console.log("📌 Processing Google booking");
+    console.log("Event ID:", event.id);
+    console.log("Summary:", event.summary);
+
+    try {
+
+        const attendee =
+            event.attendees?.find(
+                person => !person.self
+            );
+
+        const email =
+            attendee?.email || null;
+
+        const name =
+            attendee?.displayName ||
+            event.summary ||
+            null;
+
+        const description =
+            event.description || "";
+
+        console.log("Attendee email:", email);
+        console.log("Event description:", description);
+
+        // Try to find a phone number inside the event description
+        const phoneMatch =
+            description.match(
+                /(?:\+?\d[\d\s()-]{8,}\d)/
+            );
+
+        const phone =
+            phoneMatch
+                ? normalizePhone(phoneMatch[0])
+                : null;
+
+        console.log("Extracted phone:", phone);
+
+        // For now we need a phone number to match the
+        // WhatsApp patient with the Google booking.
+        if (!phone) {
+
+            console.log(
+                "⚠️ No phone number found in Google Calendar event."
+            );
+
+            console.log(
+                "⚠️ Cannot match booking to WhatsApp patient yet."
+            );
+
+            return;
+        }
+
+        // Find existing New Lead, or create one if missing
+        const patient =
+            await findOrCreatePatient({
+                phone,
+                name,
+                fallbackStage: "Booked"
+            });
+
+        // Update Notion patient
+        await updatePatient(
+            patient.id,
+            {
+                name,
+                email,
+                stage: "Booked",
+                appointmentDate:
+                    event.start?.dateTime ||
+                    event.start?.date
+            }
+        );
+
+        console.log(
+            `✅ Patient ${phone} updated to Booked in Notion`
+        );
+
+        // Send appointment confirmation on WhatsApp
+        const appointmentDate =
+            event.start?.dateTime ||
+            event.start?.date;
+
+        let formattedDate =
+            appointmentDate;
+
+        if (appointmentDate) {
+
+            formattedDate =
+                new Date(
+                    appointmentDate
+                ).toLocaleString(
+                    "en-IN",
+                    {
+                        timeZone:
+                            "Asia/Kolkata",
+
+                        dateStyle:
+                            "medium",
+
+                        timeStyle:
+                            "short"
+                    }
+                );
+        }
+
+        await sendWhatsAppMessage(
+            phone,
+            {
+                type: "text",
+
+                text: {
+                    body:
+`Your appointment is confirmed ✅
+
+📅 Date & Time:
+${formattedDate}
+
+Before your consultation, please complete this short intake form:
+
+👉 ${INTAKE_FORM_URL}
+
+This helps the practitioner prepare for your consultation.`
+                }
+            }
+        );
+
+        console.log(
+            `✅ WhatsApp confirmation sent to ${phone}`
+        );
+
+    } catch (error) {
+
+        console.error(
+            "❌ processGoogleBooking failed:"
+        );
+
+        console.error(
+            error.response?.data ||
+            error.body ||
+            error.message ||
+            error
+        );
+    }
+}
+
 // ======================================================
 // WHATSAPP MAIN MENU
 // ======================================================
