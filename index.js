@@ -585,45 +585,44 @@ function getFieldValue(fields, patterns) {
 
 async function syncRecentGoogleBookings() {
 
-    const fiveMinutesAgo =
-        new Date(
-            Date.now() -
-            5 * 60 * 1000
-        );
+    console.log("🔎 Checking recently changed Google Calendar events...");
 
+    const tenMinutesAgo =
+        new Date(
+            Date.now() - 10 * 60 * 1000
+        ).toISOString();
 
     const response =
         await calendar.events.list({
 
             calendarId:
-                process.env
-                    .GOOGLE_CALENDAR_ID ||
-                "primary",
+                process.env.GOOGLE_CALENDAR_ID || "primary",
 
-            timeMin:
-                fiveMinutesAgo
-                    .toISOString(),
+            updatedMin: tenMinutesAgo,
 
-            singleEvents:
-                true,
+            singleEvents: true,
 
-            orderBy:
-                "startTime",
+            showDeleted: false,
 
-            maxResults:
-                20
+            maxResults: 50
         });
-
 
     const events =
         response.data.items || [];
 
+    console.log(
+        `📅 Found ${events.length} recently changed events`
+    );
 
     for (const event of events) {
 
-        await processGoogleBooking(
-            event
+        console.log(
+            "Changed event:",
+            event.id,
+            event.summary
         );
+
+        await processGoogleBooking(event);
     }
 }
 
@@ -633,6 +632,33 @@ async function processGoogleBooking(event) {
     console.log("📌 Processing Google booking");
     console.log("Event ID:", event.id);
     console.log("Summary:", event.summary);
+
+    const description =
+    event.description || "";
+
+    const isAppointmentSchedule =
+        event.summary?.includes(
+            process.env.GOOGLE_APPOINTMENT_SUMMARY
+        );
+
+    const isBookedEvent =
+        description.includes("Booked by");
+
+    if (
+        !isAppointmentSchedule ||
+        !isBookedEvent
+    ) {
+
+        console.log(
+            "⏭️ Event is not a patient booking"
+        );
+
+        return;
+    }
+
+    console.log(
+        "✅ Event identified as patient appointment booking"
+    );
 
     try {
 
