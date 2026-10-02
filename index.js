@@ -751,8 +751,20 @@ async function processGoogleBooking(event) {
             );
 
 
+        const emailMatch =
+            description.match(
+                /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+            );
+
         const email =
-            attendee?.email || null;
+            emailMatch
+                ? emailMatch[0].toLowerCase()
+                : null;
+
+        console.log(
+            "Patient email:",
+            email
+        );
 
 
         // -------------------------------------------------
