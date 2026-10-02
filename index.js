@@ -97,7 +97,7 @@ const PATIENT = {
     lastCheckin: "Last Check-in Date",
     dateOfBirth: "Date of Birth",
     address: "Home Address",
-    source: "Source"
+    source: "Source",
     googleEventId: "Google Event ID"
 };
 
@@ -1737,7 +1737,7 @@ app.post(
                 getFieldValue(
                     fields,
                     [
-                        "Email Address",
+                        "Patient Email",
                         "^Email$"
                     ]
                 );
