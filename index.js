@@ -7,7 +7,7 @@ app.use(express.json());
 
 const { google } = require("googleapis");
 const crypto = require("crypto");
-
+const processingGoogleEvents = new Set();
 
 // ======================================================
 // ENVIRONMENT VARIABLES
@@ -87,17 +87,18 @@ const notion = new Client({
 // ======================================================
 
 const PATIENT = {
-    name: "Client Name",
+    name: "Patient Name",
     phone: "Phone Number",
-    email: "Email Address",
+    email: "Patient Email",
     stage: "Patient Stage",
     programStatus: "Program Status",
     program: "Program Type",
-    appointmentDate: "Appointment Date",
+    appointmentDate: "Start Date",   //not correct, start date is programs start date not appointment date
     lastCheckin: "Last Check-in Date",
     dateOfBirth: "Date of Birth",
     address: "Home Address",
     source: "Source"
+    googleEventId: "Google Event ID"
 };
 
 
@@ -465,6 +466,14 @@ async function updatePatient(pageId, updates) {
             );
     }
 
+    if (updates.googleEventId) {
+
+                properties[PATIENT.googleEventId] =
+                    textProperty(
+                        updates.googleEventId
+                    );
+            }
+
 
     if (Object.keys(properties).length === 0) {
 
@@ -516,6 +525,33 @@ async function findOrCreatePatient({
     });
 }
 
+
+// ======================================================
+// PREVENT IDEMPOTENCY
+// ======================================================
+
+async function findPatientByGoogleEventId(eventId) {
+
+    if (!eventId) return null;
+
+    const response = await notion.dataSources.query({
+        data_source_id:
+            NOTION_PATIENTS_DATA_SOURCE_ID,
+
+        filter: {
+            property: PATIENT.googleEventId,
+            rich_text: {
+                equals: eventId
+            }
+        }
+    });
+
+    return (
+        response.results.find(
+            item => item.object === "page"
+        ) || null
+    );
+}
 
 // ======================================================
 // FORM FIELD HELPERS
@@ -629,73 +665,229 @@ async function syncRecentGoogleBookings() {
 
 async function processGoogleBooking(event) {
 
-    console.log("📌 Processing Google booking");
-    console.log("Event ID:", event.id);
-    console.log("Summary:", event.summary);
+    // -------------------------------------------------
+    // IN-MEMORY LOCK
+    // -------------------------------------------------
 
-    const description =
-    event.description || "";
-
-    const isAppointmentSchedule =
-        event.summary?.includes(
-            process.env.GOOGLE_APPOINTMENT_SUMMARY
-        );
-
-    const isBookedEvent =
-        description.includes("Booked by");
-
-    if (
-        !isAppointmentSchedule ||
-        !isBookedEvent
-    ) {
+    if (processingGoogleEvents.has(event.id)) {
 
         console.log(
-            "⏭️ Event is not a patient booking"
+            "⏭️ Event already being processed:",
+            event.id
         );
 
         return;
     }
 
-    console.log(
-        "✅ Event identified as patient appointment booking"
-    );
+    processingGoogleEvents.add(event.id);
 
     try {
+
+        console.log("📌 Processing Google booking");
+        console.log("Event ID:", event.id);
+        console.log("Summary:", event.summary);
+
+        const description =
+            event.description || "";
+
+        const isAppointmentSchedule =
+            event.summary?.includes(
+                process.env.GOOGLE_APPOINTMENT_SUMMARY
+            );
+
+        const isBookedEvent =
+            description.includes("Booked by");
+
+
+        // -------------------------------------------------
+        // IGNORE NON-PATIENT CALENDAR EVENTS
+        // -------------------------------------------------
+
+        if (
+            !isAppointmentSchedule ||
+            !isBookedEvent
+        ) {
+
+            console.log(
+                "⏭️ Event is not a patient booking"
+            );
+
+            return;
+        }
+
+
+        console.log(
+            "✅ Event identified as patient appointment booking"
+        );
+
+
+        // -------------------------------------------------
+        // CHECK IF EVENT WAS ALREADY PROCESSED IN NOTION
+        // -------------------------------------------------
+
+        const alreadyProcessed =
+            await findPatientByGoogleEventId(
+                event.id
+            );
+
+        if (alreadyProcessed) {
+
+            console.log(
+                "⏭️ Google booking already processed:",
+                event.id
+            );
+
+            return;
+        }
+
+
+        // -------------------------------------------------
+        // GET ATTENDEE DETAILS
+        // -------------------------------------------------
 
         const attendee =
             event.attendees?.find(
                 person => !person.self
             );
 
+
         const email =
             attendee?.email || null;
 
-        const name =
-            attendee?.displayName ||
-            event.summary ||
-            null;
 
-        const description =
-            event.description || "";
+        // -------------------------------------------------
+        // EXTRACT ACTUAL PATIENT NAME
+        // -------------------------------------------------
 
-        console.log("Attendee email:", email);
-        console.log("Event description:", description);
+        function looksLikeName(value) {
 
-        // Try to find a phone number inside the event description
+        if (!value) return false;
+
+            if (value.includes("@")) {
+                return false;
+            }
+
+            if (/^\+?[\d\s()-]+$/.test(value)) {
+                return false;
+            }
+
+            return true;
+        }
+
+
+        const cleanDescription =
+            description
+                .replace(/<[^>]*>/g, "")
+                .split("\n")
+                .map(line => line.trim())
+                .filter(Boolean);
+
+
+        let name = null;
+
+
+        // Find "Booked by" anywhere in description
+
+        const bookedByIndex =
+            cleanDescription.findIndex(
+                line =>
+                    line.toLowerCase() ===
+                    "booked by"
+            );
+
+
+        if (bookedByIndex !== -1) {
+
+            const possibleName =
+                cleanDescription[
+                    bookedByIndex + 1
+                ];
+
+            if (
+                looksLikeName(
+                    possibleName
+                )
+            ) {
+
+                name =
+                    possibleName;
+            }
+        }
+
+
+        // Fallback to name inside summary:
+        // Clinic Appointment Schedule (Ruman Mohammad)
+
+        if (!name && event.summary) {
+
+            const summaryMatch =
+                event.summary.match(
+                    /\(([^()]+)\)\s*$/
+                );
+
+            if (
+                summaryMatch?.[1] &&
+                looksLikeName(
+                    summaryMatch[1]
+                )
+            ) {
+
+                name =
+                    summaryMatch[1].trim();
+            }
+        }
+
+
+        // Last fallback
+
+        if (!name) {
+
+            name =
+                attendee?.displayName ||
+                "Unknown Patient";
+        }
+
+
+        console.log(
+            "Patient name:",
+            name
+        );
+
+        console.log(
+            "Attendee email:",
+            email
+        );
+
+        console.log(
+            "Event description:",
+            description
+        );
+
+
+        // -------------------------------------------------
+        // EXTRACT PHONE NUMBER
+        // -------------------------------------------------
+
         const phoneMatch =
             description.match(
                 /(?:\+?\d[\d\s()-]{8,}\d)/
             );
 
+
         const phone =
             phoneMatch
-                ? normalizePhone(phoneMatch[0])
+                ? normalizePhone(
+                    phoneMatch[0]
+                )
                 : null;
 
-        console.log("Extracted phone:", phone);
 
-        // For now we need a phone number to match the
-        // WhatsApp patient with the Google booking.
+        console.log(
+            "Extracted phone:",
+            phone
+        );
+
+
         if (!phone) {
 
             console.log(
@@ -709,38 +901,63 @@ async function processGoogleBooking(event) {
             return;
         }
 
-        // Find existing New Lead, or create one if missing
+
+        // -------------------------------------------------
+        // FIND EXISTING PATIENT OR CREATE ONE
+        // -------------------------------------------------
+
         const patient =
             await findOrCreatePatient({
                 phone,
                 name,
-                fallbackStage: "Booked"
+                fallbackStage:
+                    "Booked"
             });
 
-        // Update Notion patient
+
+        // -------------------------------------------------
+        // UPDATE NOTION
+        // -------------------------------------------------
+
         await updatePatient(
             patient.id,
             {
                 name,
+
+                // Keep these only if these properties
+                // actually exist in your Notion database.
                 email,
-                stage: "Booked",
+
+                stage:
+                    "Booked",
+
                 appointmentDate:
                     event.start?.dateTime ||
-                    event.start?.date
+                    event.start?.date,
+
+                googleEventId:
+                    event.id
             }
         );
+
 
         console.log(
             `✅ Patient ${phone} updated to Booked in Notion`
         );
 
-        // Send appointment confirmation on WhatsApp
+
+        // -------------------------------------------------
+        // FORMAT APPOINTMENT DATE
+        // -------------------------------------------------
+
         const appointmentDate =
             event.start?.dateTime ||
             event.start?.date;
 
+
         let formattedDate =
             appointmentDate;
+
 
         if (appointmentDate) {
 
@@ -761,6 +978,11 @@ async function processGoogleBooking(event) {
                     }
                 );
         }
+
+
+        // -------------------------------------------------
+        // SEND WHATSAPP CONFIRMATION
+        // -------------------------------------------------
 
         await sendWhatsAppMessage(
             phone,
@@ -783,9 +1005,11 @@ This helps the practitioner prepare for your consultation.`
             }
         );
 
+
         console.log(
             `✅ WhatsApp confirmation sent to ${phone}`
         );
+
 
     } catch (error) {
 
@@ -798,6 +1022,21 @@ This helps the practitioner prepare for your consultation.`
             error.body ||
             error.message ||
             error
+        );
+
+    } finally {
+
+        // -------------------------------------------------
+        // ALWAYS RELEASE LOCK
+        // -------------------------------------------------
+
+        processingGoogleEvents.delete(
+            event.id
+        );
+
+        console.log(
+            "🔓 Released event lock:",
+            event.id
         );
     }
 }
