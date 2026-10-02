@@ -886,12 +886,17 @@ async function processGoogleBooking(event) {
             );
 
 
-        const phone =
+        let phone =
             phoneMatch
-                ? normalizePhone(
-                    phoneMatch[0]
-                )
+                ? normalizePhone(phoneMatch[0])
                 : null;
+
+        // Temporary India fallback
+        if (phone && phone.length === 10) {
+            phone = `91${phone}`;
+        }
+
+        console.log("WhatsApp-ready phone:", phone);
 
 
         console.log(
