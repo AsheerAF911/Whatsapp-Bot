@@ -1844,6 +1844,26 @@ How can we help you today?`
 }
 
 
+app.get("/notion-appointments-info", async (req, res) => {
+    try {
+        const response = await notion.databases.retrieve({
+            database_id:
+                process.env.NOTION_APPOINTMENTS_DATABASE_ID
+        });
+
+        res.json({
+            database_id: response.id,
+            data_sources: response.data_sources
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            ok: false,
+            error: error.body || error.message
+        });
+    }
+});
+
 // ======================================================
 // META WEBHOOK VERIFICATION
 // ======================================================
