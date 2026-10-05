@@ -1844,11 +1844,11 @@ How can we help you today?`
 }
 
 
-app.get("/notion-appointments-info", async (req, res) => {
+app.get("/notion-history-info", async (req, res) => {
     try {
         const response = await notion.databases.retrieve({
             database_id:
-                process.env.NOTION_APPOINTMENTS_DATABASE_ID
+                process.env.NOTION_PATIENT_HISTORY_DATABASE_ID
         });
 
         res.json({
