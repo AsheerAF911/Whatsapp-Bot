@@ -1,13 +1,12 @@
 const express = require("express");
 const axios = require("axios");
 const { Client } = require("@notionhq/client");
+const { google } = require("googleapis");
+const crypto = require("crypto");
 
 const app = express();
 app.use(express.json());
 
-const { google } = require("googleapis");
-const crypto = require("crypto");
-const processingGoogleEvents = new Set();
 
 // ======================================================
 // ENVIRONMENT VARIABLES
@@ -28,42 +27,30 @@ const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_PATIENTS_DATA_SOURCE_ID =
     process.env.NOTION_PATIENTS_DATA_SOURCE_ID;
 
-// Optional for now.
-// If configured, check-in form responses will also
-// create records inside a separate Check-ins database.
+const NOTION_APPOINTMENTS_DATA_SOURCE_ID =
+    process.env.NOTION_APPOINTMENTS_DATA_SOURCE_ID;
+
+const NOTION_PATIENT_HISTORY_DATA_SOURCE_ID =
+    process.env.NOTION_PATIENT_HISTORY_DATA_SOURCE_ID;
+
 const NOTION_CHECKINS_DATA_SOURCE_ID =
     process.env.NOTION_CHECKINS_DATA_SOURCE_ID;
 
 
-// EXTERNAL LINKS
+// GOOGLE
 const GOOGLE_BOOKING_URL =
-    process.env.GOOGLE_BOOKING_URL ||
-    "https://calendar.app.google/FHcgeVLDPfEyf61Q6";
+    process.env.GOOGLE_BOOKING_URL;
 
-const googleOAuthClient =
-    new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        process.env.GOOGLE_REDIRECT_URI
-    );
+const GOOGLE_APPOINTMENT_SUMMARY =
+    process.env.GOOGLE_APPOINTMENT_SUMMARY;
 
-googleOAuthClient.setCredentials({
-    refresh_token:
-        process.env.GOOGLE_REFRESH_TOKEN
-});
 
-const calendar = google.calendar({
-    version: "v3",
-    auth: googleOAuthClient
-});
-
+// FORMS
 const INTAKE_FORM_URL =
-    process.env.INTAKE_FORM_URL ||
-    "https://tally.so/r/0Q757Z";
+    process.env.INTAKE_FORM_URL;
 
 const CHECKIN_FORM_URL =
-    process.env.CHECKIN_FORM_URL ||
-    "https://tally.so/r/2EBgP9";
+    process.env.CHECKIN_FORM_URL;
 
 const FOLLOWUP_FORM_URL =
     process.env.FOLLOWUP_FORM_URL || "";
@@ -80,38 +67,116 @@ const notion = new Client({
 
 
 // ======================================================
+// GOOGLE CALENDAR CLIENT
+// ======================================================
+
+const googleOAuthClient =
+    new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+    );
+
+
+googleOAuthClient.setCredentials({
+    refresh_token:
+        process.env.GOOGLE_REFRESH_TOKEN
+});
+
+
+const calendar =
+    google.calendar({
+        version: "v3",
+        auth: googleOAuthClient
+    });
+
+
+// ======================================================
+// GOOGLE EVENT LOCK
+// ======================================================
+
+const processingGoogleEvents =
+    new Set();
+
+
+// ======================================================
 // NOTION PROPERTY NAMES
 //
-// IMPORTANT:
-// These must match your Notion database property names.
+// CHANGE THESE ONLY IF YOUR NOTION PROPERTY NAMES DIFFER
 // ======================================================
 
 const PATIENT = {
+
     name: "Patient Name",
+
+    patientId: "Patient ID",
+
     phone: "Phone Number",
+
     email: "Patient Email",
+
     stage: "Patient Stage",
+
     programStatus: "Program Status",
+
     program: "Program Type",
-    appointmentDate: "Start Date",   //not correct, start date is programs start date not appointment date
+
     lastCheckin: "Last Check-in Date",
+
     dateOfBirth: "Date of Birth",
+
     address: "Home Address",
-    source: "Source",
+
+    source: "Source"
+};
+
+
+const APPOINTMENT = {
+
+    title: "Patient Name",
+
+    patientRelation: "Patient",
+
+    date: "Date of Appointment",
+
+    reason: "Reason for Appointment",
+
+    status: "Status",
+
     googleEventId: "Google Event ID"
 };
 
 
-// If you create a separate Check-ins database,
-// these are the property names expected there.
+const HISTORY = {
 
-const CHECKIN = {
-    title: "Check-in",
-    patient: "Patient",
-    submittedAt: "Submitted At",
-    summary: "Response Summary"
+    title: "Name",
+
+    patientRelation: "Client",
+
+    medicalHistory: "Medical History",
+
+    diagnoses: "Diagnoses",
+
+    medications: "Medications",
+
+    allergies: "Allergies",
+
+    goals: "Goals",
+
+    specialNotes: "Special Notes"
 };
 
+
+const CHECKIN = {
+
+    title: "Check-in",
+
+    patient: "Patient",
+
+    submittedAt: "Submitted At",
+
+    summary: "Response Summary"
+};
 
 
 // ======================================================
@@ -122,23 +187,53 @@ function normalizePhone(value) {
 
     if (!value) return null;
 
-    // Handles form systems that return:
-    // { countryCode: "+91", phoneNumber: "9876543210" }
 
     if (typeof value === "object") {
 
-        if (value.countryCode && value.phoneNumber) {
-            return `${value.countryCode}${value.phoneNumber}`
-                .replace(/\D/g, "");
+        if (
+            value.countryCode &&
+            value.phoneNumber
+        ) {
+
+            return (
+                `${value.countryCode}${value.phoneNumber}`
+            ).replace(/\D/g, "");
         }
 
+
         if (value.phoneNumber) {
-            return String(value.phoneNumber)
-                .replace(/\D/g, "");
+
+            return String(
+                value.phoneNumber
+            ).replace(/\D/g, "");
         }
     }
 
-    return String(value).replace(/\D/g, "");
+
+    return String(value)
+        .replace(/\D/g, "");
+}
+
+
+function normalizeIndiaPhone(phone) {
+
+    let normalized =
+        normalizePhone(phone);
+
+    if (!normalized) {
+        return null;
+    }
+
+
+    // Temporary India-specific handling
+    if (normalized.length === 10) {
+
+        normalized =
+            `91${normalized}`;
+    }
+
+
+    return normalized;
 }
 
 
@@ -146,61 +241,68 @@ function toDateOnly(value) {
 
     if (!value) return null;
 
-    const date = new Date(value);
+    const date =
+        new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+
         return null;
     }
 
-    return date.toISOString().split("T")[0];
+
+    return date
+        .toISOString()
+        .split("T")[0];
 }
 
 
 function readableValue(value) {
 
-    if (value === null || value === undefined) {
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
         return "";
     }
 
+
     if (typeof value === "object") {
 
-        if (value.countryCode && value.phoneNumber) {
-            return `${value.countryCode}${value.phoneNumber}`;
+        if (
+            value.countryCode &&
+            value.phoneNumber
+        ) {
+
+            return (
+                `${value.countryCode}${value.phoneNumber}`
+            );
         }
 
+
         try {
+
             return JSON.stringify(value);
+
         } catch {
+
             return String(value);
         }
     }
+
 
     return String(value);
 }
 
 
-// ======================================================
-// WHATSAPP HELPER
-// ======================================================
+function generatePatientId() {
 
-async function sendWhatsAppMessage(to, payload) {
-
-    return axios.post(
-
-        `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-
-        {
-            messaging_product: "whatsapp",
-            to,
-            ...payload
-        },
-
-        {
-            headers: {
-                Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-                "Content-Type": "application/json"
-            }
-        }
+    return (
+        `PAT-${crypto.randomUUID()}`
     );
 }
 
@@ -212,10 +314,12 @@ async function sendWhatsAppMessage(to, payload) {
 function titleProperty(value) {
 
     return {
+
         title: [
             {
                 text: {
-                    content: String(value)
+                    content:
+                        String(value)
                 }
             }
         ]
@@ -226,10 +330,12 @@ function titleProperty(value) {
 function textProperty(value) {
 
     return {
+
         rich_text: [
             {
                 text: {
-                    content: String(value)
+                    content:
+                        String(value)
                 }
             }
         ]
@@ -240,6 +346,7 @@ function textProperty(value) {
 function selectProperty(value) {
 
     return {
+
         select: {
             name: value
         }
@@ -250,6 +357,7 @@ function selectProperty(value) {
 function dateProperty(value) {
 
     return {
+
         date: {
             start: value
         }
@@ -258,37 +366,297 @@ function dateProperty(value) {
 
 
 // ======================================================
-// FIND PATIENT BY PHONE
+// WHATSAPP HELPER
 // ======================================================
 
-async function findPatientByPhone(phone) {
+async function sendWhatsAppMessage(
+    to,
+    payload
+) {
 
-    const normalizedPhone = normalizePhone(phone);
+    return axios.post(
 
-    if (!normalizedPhone) {
+        `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+
+        {
+            messaging_product:
+                "whatsapp",
+
+            to,
+
+            ...payload
+        },
+
+        {
+            headers: {
+
+                Authorization:
+                    `Bearer ${WHATSAPP_TOKEN}`,
+
+                "Content-Type":
+                    "application/json"
+            }
+        }
+    );
+}
+
+
+// ======================================================
+// FORM HELPERS
+// ======================================================
+
+function getFormFields(body) {
+
+    if (
+        Array.isArray(
+            body?.data?.fields
+        )
+    ) {
+
+        return body.data.fields;
+    }
+
+
+    if (
+        Array.isArray(
+            body?.data
+        )
+    ) {
+
+        return body.data;
+    }
+
+
+    if (
+        Array.isArray(
+            body?.fields
+        )
+    ) {
+
+        return body.fields;
+    }
+
+
+    return [];
+}
+
+
+function findField(
+    fields,
+    patterns
+) {
+
+    const regexes =
+        patterns.map(
+            pattern =>
+                new RegExp(
+                    pattern,
+                    "i"
+                )
+        );
+
+
+    return fields.find(
+        field => {
+
+            const label =
+                field.label ||
+                field.name ||
+                field.key ||
+                "";
+
+
+            return regexes.some(
+                regex =>
+                    regex.test(label)
+            );
+        }
+    );
+}
+
+
+function getFieldValue(
+    fields,
+    patterns
+) {
+
+    const field =
+        findField(
+            fields,
+            patterns
+        );
+
+
+    if (!field) {
         return null;
     }
 
-    const response = await notion.dataSources.query({
 
-        data_source_id:
-            NOTION_PATIENTS_DATA_SOURCE_ID,
-
-        filter: {
-
-            property: PATIENT.phone,
-
-            rich_text: {
-                equals: normalizedPhone
-            }
-        }
-    });
-
-    const patient = response.results.find(
-        item => item.object === "page"
+    return (
+        field.value ??
+        field.answer ??
+        field.response ??
+        null
     );
+}
 
-    return patient || null;
+
+// ======================================================
+// PATIENT LOOKUP
+//
+// IMPORTANT:
+// PHONE IS NOT A UNIQUE PATIENT IDENTIFIER.
+// ======================================================
+
+async function findPatientsByName(
+    name
+) {
+
+    if (!name) {
+        return [];
+    }
+
+
+    const response =
+        await notion.dataSources.query({
+
+            data_source_id:
+                NOTION_PATIENTS_DATA_SOURCE_ID,
+
+            filter: {
+
+                property:
+                    PATIENT.name,
+
+                title: {
+                    equals: name
+                }
+            }
+        });
+
+
+    return response.results
+        .filter(
+            item =>
+                item.object === "page"
+        );
+}
+
+
+function getPatientEmailFromPage(
+    page
+) {
+
+    return (
+        page.properties[
+            PATIENT.email
+        ]?.email ||
+        null
+    );
+}
+
+
+function getPatientPhoneFromPage(
+    page
+) {
+
+    return (
+        page.properties[
+            PATIENT.phone
+        ]
+            ?.rich_text?.[0]
+            ?.plain_text ||
+        null
+    );
+}
+
+
+// ======================================================
+// FIND LIKELY EXISTING PATIENT
+//
+// MATCH:
+// name + email
+// OR
+// name + phone
+//
+// PHONE ALONE IS NEVER ENOUGH.
+// ======================================================
+
+async function findMatchingPatient({
+    name,
+    email,
+    phone
+}) {
+
+    const candidates =
+        await findPatientsByName(
+            name
+        );
+
+
+    if (!candidates.length) {
+        return null;
+    }
+
+
+    const normalizedEmail =
+        email
+            ?.trim()
+            ?.toLowerCase() ||
+        null;
+
+
+    const normalizedPhone =
+        normalizeIndiaPhone(
+            phone
+        );
+
+
+    for (
+        const patient
+        of candidates
+    ) {
+
+        const patientEmail =
+            getPatientEmailFromPage(
+                patient
+            )
+                ?.trim()
+                ?.toLowerCase();
+
+
+        const patientPhone =
+            normalizeIndiaPhone(
+                getPatientPhoneFromPage(
+                    patient
+                )
+            );
+
+
+        if (
+            normalizedEmail &&
+            patientEmail &&
+            normalizedEmail ===
+                patientEmail
+        ) {
+
+            return patient;
+        }
+
+
+        if (
+            normalizedPhone &&
+            patientPhone &&
+            normalizedPhone ===
+                patientPhone
+        ) {
+
+            return patient;
+        }
+    }
+
+
+    return null;
 }
 
 
@@ -299,125 +667,154 @@ async function findPatientByPhone(phone) {
 async function createPatient({
     phone,
     name,
-    stage = "New Lead"
+    email,
+    stage = "Booked"
 }) {
 
-    const normalizedPhone = normalizePhone(phone);
+    const patientId =
+        generatePatientId();
 
-    if (!normalizedPhone) {
-        throw new Error(
-            "Cannot create patient without phone number"
-        );
+
+    const properties = {
+
+        [PATIENT.name]:
+            titleProperty(
+                name ||
+                "Unknown Patient"
+            ),
+
+        [PATIENT.patientId]:
+            textProperty(
+                patientId
+            ),
+
+        [PATIENT.stage]:
+            selectProperty(
+                stage
+            ),
+
+        [PATIENT.source]:
+            selectProperty(
+                "WhatsApp"
+            )
+    };
+
+
+    if (phone) {
+
+        properties[
+            PATIENT.phone
+        ] =
+            textProperty(
+                normalizeIndiaPhone(
+                    phone
+                )
+            );
     }
 
-    const displayName =
-        name || `WhatsApp ${normalizedPhone.slice(-4)}`;
 
-    const patient = await notion.pages.create({
+    if (email) {
 
-        parent: {
-            data_source_id:
-                NOTION_PATIENTS_DATA_SOURCE_ID
-        },
+        properties[
+            PATIENT.email
+        ] = {
 
-        properties: {
+            email:
+                email
+                    .trim()
+                    .toLowerCase()
+        };
+    }
 
-            [PATIENT.name]:
-                titleProperty(displayName),
 
-            [PATIENT.phone]:
-                textProperty(normalizedPhone),
+    const patient =
+        await notion.pages.create({
 
-            [PATIENT.stage]:
-                selectProperty(stage),
+            parent: {
 
-            [PATIENT.source]:
-                selectProperty("WhatsApp")
-        }
-    });
+                data_source_id:
+                    NOTION_PATIENTS_DATA_SOURCE_ID
+            },
+
+            properties
+        });
+
 
     console.log(
-        `✅ Notion patient created: ${displayName}`
+        `✅ Patient created: ${name} (${patientId})`
     );
 
-    return patient;
-}
-
-
-// ======================================================
-// CREATE NEW LEAD ONLY IF PATIENT DOESN'T EXIST
-// ======================================================
-
-async function ensureNewLead(phone) {
-
-    const normalizedPhone = normalizePhone(phone);
-
-    let patient =
-        await findPatientByPhone(normalizedPhone);
-
-    if (patient) {
-
-        console.log(
-            `ℹ️ Patient already exists: ${normalizedPhone}`
-        );
-
-        // IMPORTANT:
-        // Do NOT reset an existing patient to New Lead.
-        return patient;
-    }
-
-    patient = await createPatient({
-        phone: normalizedPhone,
-        stage: "New Lead"
-    });
 
     return patient;
 }
 
 
 // ======================================================
-// UPDATE NOTION PATIENT
+// UPDATE PATIENT
 // ======================================================
 
-async function updatePatient(pageId, updates) {
+async function updatePatient(
+    pageId,
+    updates
+) {
 
     const properties = {};
 
 
     if (updates.name) {
 
-        properties[PATIENT.name] =
-            titleProperty(updates.name);
+        properties[
+            PATIENT.name
+        ] =
+            titleProperty(
+                updates.name
+            );
     }
 
 
     if (updates.phone) {
 
-        properties[PATIENT.phone] =
+        properties[
+            PATIENT.phone
+        ] =
             textProperty(
-                normalizePhone(updates.phone)
+                normalizeIndiaPhone(
+                    updates.phone
+                )
             );
     }
 
 
     if (updates.email) {
 
-        properties[PATIENT.email] = {
-            email: updates.email
+        properties[
+            PATIENT.email
+        ] = {
+
+            email:
+                updates.email
+                    .trim()
+                    .toLowerCase()
         };
     }
 
 
     if (updates.stage) {
 
-        properties[PATIENT.stage] =
-            selectProperty(updates.stage);
+        properties[
+            PATIENT.stage
+        ] =
+            selectProperty(
+                updates.stage
+            );
     }
 
 
     if (updates.programStatus) {
 
-        properties[PATIENT.programStatus] =
+        properties[
+            PATIENT.programStatus
+        ] =
             selectProperty(
                 updates.programStatus
             );
@@ -426,23 +823,20 @@ async function updatePatient(pageId, updates) {
 
     if (updates.program) {
 
-        properties[PATIENT.program] =
-            selectProperty(updates.program);
-    }
-
-
-    if (updates.appointmentDate) {
-
-        properties[PATIENT.appointmentDate] =
-            dateProperty(
-                updates.appointmentDate
+        properties[
+            PATIENT.program
+        ] =
+            selectProperty(
+                updates.program
             );
     }
 
 
     if (updates.lastCheckin) {
 
-        properties[PATIENT.lastCheckin] =
+        properties[
+            PATIENT.lastCheckin
+        ] =
             dateProperty(
                 updates.lastCheckin
             );
@@ -451,7 +845,9 @@ async function updatePatient(pageId, updates) {
 
     if (updates.dateOfBirth) {
 
-        properties[PATIENT.dateOfBirth] =
+        properties[
+            PATIENT.dateOfBirth
+        ] =
             dateProperty(
                 updates.dateOfBirth
             );
@@ -460,197 +856,589 @@ async function updatePatient(pageId, updates) {
 
     if (updates.address) {
 
-        properties[PATIENT.address] =
+        properties[
+            PATIENT.address
+        ] =
             textProperty(
                 updates.address
             );
     }
 
-    if (updates.googleEventId) {
 
-                properties[PATIENT.googleEventId] =
-                    textProperty(
-                        updates.googleEventId
-                    );
-            }
-
-
-    if (Object.keys(properties).length === 0) {
-
-        console.log(
-            "ℹ️ No Notion properties to update."
-        );
+    if (
+        Object.keys(
+            properties
+        ).length === 0
+    ) {
 
         return null;
     }
 
 
-    const result = await notion.pages.update({
+    const result =
+        await notion.pages.update({
 
-        page_id: pageId,
+            page_id:
+                pageId,
 
-        properties
-    });
+            properties
+        });
 
 
     console.log(
-        `✅ Notion patient updated: ${pageId}`
+        `✅ Patient updated: ${pageId}`
     );
+
 
     return result;
 }
 
 
 // ======================================================
-// FIND OR CREATE PATIENT
-// ======================================================
-
-async function findOrCreatePatient({
-    phone,
-    name,
-    fallbackStage = "New Lead"
-}) {
-
-    let patient =
-        await findPatientByPhone(phone);
-
-    if (patient) {
-        return patient;
-    }
-
-    return createPatient({
-        phone,
-        name,
-        stage: fallbackStage
-    });
-}
-
-
-// ======================================================
-// PREVENT IDEMPOTENCY
-// ======================================================
-
-async function findPatientByGoogleEventId(eventId) {
-
-    if (!eventId) return null;
-
-    const response = await notion.dataSources.query({
-        data_source_id:
-            NOTION_PATIENTS_DATA_SOURCE_ID,
-
-        filter: {
-            property: PATIENT.googleEventId,
-            rich_text: {
-                equals: eventId
-            }
-        }
-    });
-
-    return (
-        response.results.find(
-            item => item.object === "page"
-        ) || null
-    );
-}
-
-// ======================================================
-// FORM FIELD HELPERS
+// APPOINTMENT LOOKUP BY GOOGLE EVENT ID
 //
-// Supports:
-// req.body.data
-// req.body.data.fields
-// req.body.fields
+// THIS IS OUR PERSISTENT DUPLICATE CHECK.
 // ======================================================
 
-function getFormFields(body) {
+async function findAppointmentByGoogleEventId(
+    eventId
+) {
 
-    if (Array.isArray(body?.data?.fields)) {
-        return body.data.fields;
-    }
-
-    if (Array.isArray(body?.data)) {
-        return body.data;
-    }
-
-    if (Array.isArray(body?.fields)) {
-        return body.fields;
-    }
-
-    return [];
-}
-
-
-function findField(fields, patterns) {
-
-    const regexes =
-        patterns.map(pattern =>
-            new RegExp(pattern, "i")
-        );
-
-    return fields.find(field => {
-
-        const label =
-            field.label ||
-            field.name ||
-            field.key ||
-            "";
-
-        return regexes.some(regex =>
-            regex.test(label)
-        );
-    });
-}
-
-
-function getFieldValue(fields, patterns) {
-
-    const field =
-        findField(fields, patterns);
-
-    if (!field) {
+    if (!eventId) {
         return null;
     }
 
+
+    const response =
+        await notion.dataSources.query({
+
+            data_source_id:
+                NOTION_APPOINTMENTS_DATA_SOURCE_ID,
+
+            filter: {
+
+                property:
+                    APPOINTMENT.googleEventId,
+
+                rich_text: {
+                    equals: eventId
+                }
+            }
+        });
+
+
     return (
-        field.value ??
-        field.answer ??
-        field.response ??
+        response.results.find(
+            item =>
+                item.object === "page"
+        ) ||
         null
     );
 }
 
+
+// ======================================================
+// CREATE APPOINTMENT
+// ======================================================
+
+async function createAppointment({
+    patient,
+    patientName,
+    event
+}) {
+
+    const appointmentDate =
+        event.start?.dateTime ||
+        event.start?.date;
+
+
+    const appointment =
+        await notion.pages.create({
+
+            parent: {
+
+                data_source_id:
+                    NOTION_APPOINTMENTS_DATA_SOURCE_ID
+            },
+
+            properties: {
+
+                [APPOINTMENT.title]:
+                    titleProperty(
+                        patientName
+                    ),
+
+                [APPOINTMENT.patientRelation]:
+                {
+                    relation: [
+                        {
+                            id:
+                                patient.id
+                        }
+                    ]
+                },
+
+                [APPOINTMENT.date]:
+                    dateProperty(
+                        appointmentDate
+                    ),
+
+                [APPOINTMENT.status]:
+                    selectProperty(
+                        "Confirmed"
+                    ),
+
+                [APPOINTMENT.googleEventId]:
+                    textProperty(
+                        event.id
+                    )
+            }
+        });
+
+
+    console.log(
+        `✅ Appointment created: ${event.id}`
+    );
+
+
+    return appointment;
+}
+
+
+// ======================================================
+// GET PATIENT FROM APPOINTMENT RELATION
+// ======================================================
+
+function getPatientIdFromAppointment(
+    appointment
+) {
+
+    const relation =
+        appointment.properties[
+            APPOINTMENT.patientRelation
+        ]?.relation;
+
+
+    return (
+        relation?.[0]?.id ||
+        null
+    );
+}
+
+
+// ======================================================
+// FIND PATIENT HISTORY BY PATIENT RELATION
+// ======================================================
+
+async function findPatientHistoryByPatientId(
+    patientId
+) {
+
+    if (!patientId) {
+        return null;
+    }
+
+
+    const response =
+        await notion.dataSources.query({
+
+            data_source_id:
+                NOTION_PATIENT_HISTORY_DATA_SOURCE_ID,
+
+            filter: {
+
+                property:
+                    HISTORY.patientRelation,
+
+                relation: {
+                    contains:
+                        patientId
+                }
+            }
+        });
+
+
+    return (
+        response.results.find(
+            item =>
+                item.object === "page"
+        ) ||
+        null
+    );
+}
+
+
+// ======================================================
+// CREATE OR UPDATE PATIENT HISTORY
+// ======================================================
+
+async function upsertPatientHistory({
+    patientId,
+    name,
+    medicalHistory,
+    diagnoses,
+    medications,
+    allergies,
+    goals,
+    specialNotes
+}) {
+
+    if (
+        !NOTION_PATIENT_HISTORY_DATA_SOURCE_ID
+    ) {
+
+        console.log(
+            "ℹ️ Patient History data source not configured"
+        );
+
+        return;
+    }
+
+
+    const existing =
+        await findPatientHistoryByPatientId(
+            patientId
+        );
+
+
+    const properties = {};
+
+
+    if (name) {
+
+        properties[
+            HISTORY.title
+        ] =
+            titleProperty(
+                name
+            );
+    }
+
+
+    properties[
+        HISTORY.patientRelation
+    ] = {
+
+        relation: [
+            {
+                id:
+                    patientId
+            }
+        ]
+    };
+
+
+    if (medicalHistory) {
+
+        properties[
+            HISTORY.medicalHistory
+        ] =
+            textProperty(
+                medicalHistory
+            );
+    }
+
+
+    if (diagnoses) {
+
+        properties[
+            HISTORY.diagnoses
+        ] =
+            textProperty(
+                diagnoses
+            );
+    }
+
+
+    if (medications) {
+
+        properties[
+            HISTORY.medications
+        ] =
+            textProperty(
+                medications
+            );
+    }
+
+
+    if (allergies) {
+
+        properties[
+            HISTORY.allergies
+        ] =
+            textProperty(
+                allergies
+            );
+    }
+
+
+    if (goals) {
+
+        properties[
+            HISTORY.goals
+        ] =
+            textProperty(
+                goals
+            );
+    }
+
+
+    if (specialNotes) {
+
+        properties[
+            HISTORY.specialNotes
+        ] =
+            textProperty(
+                specialNotes
+            );
+    }
+
+
+    if (existing) {
+
+        await notion.pages.update({
+
+            page_id:
+                existing.id,
+
+            properties
+        });
+
+
+        console.log(
+            `✅ Patient History updated for ${patientId}`
+        );
+
+        return;
+    }
+
+
+    await notion.pages.create({
+
+        parent: {
+
+            data_source_id:
+                NOTION_PATIENT_HISTORY_DATA_SOURCE_ID
+        },
+
+        properties
+    });
+
+
+    console.log(
+        `✅ Patient History created for ${patientId}`
+    );
+}
+
+
+// ======================================================
+// GOOGLE BOOKING FIELD EXTRACTION
+// ======================================================
+
+function looksLikeName(value) {
+
+    if (!value) {
+        return false;
+    }
+
+
+    if (value.includes("@")) {
+        return false;
+    }
+
+
+    if (
+        /^\+?[\d\s()-]+$/
+            .test(value)
+    ) {
+
+        return false;
+    }
+
+
+    return true;
+}
+
+
+function parseGoogleBooking(
+    event
+) {
+
+    const description =
+        event.description || "";
+
+
+    const cleanDescription =
+        description
+            .replace(
+                /<[^>]*>/g,
+                ""
+            )
+            .split("\n")
+            .map(
+                line =>
+                    line.trim()
+            )
+            .filter(Boolean);
+
+
+    let name = null;
+
+
+    const bookedByIndex =
+        cleanDescription
+            .findIndex(
+                line =>
+                    line
+                        .toLowerCase() ===
+                    "booked by"
+            );
+
+
+    if (
+        bookedByIndex !== -1
+    ) {
+
+        const possibleName =
+            cleanDescription[
+                bookedByIndex + 1
+            ];
+
+
+        if (
+            looksLikeName(
+                possibleName
+            )
+        ) {
+
+            name =
+                possibleName;
+        }
+    }
+
+
+    if (
+        !name &&
+        event.summary
+    ) {
+
+        const summaryMatch =
+            event.summary.match(
+                /\(([^()]+)\)\s*$/
+            );
+
+
+        if (
+            summaryMatch?.[1] &&
+            looksLikeName(
+                summaryMatch[1]
+            )
+        ) {
+
+            name =
+                summaryMatch[1]
+                    .trim();
+        }
+    }
+
+
+    if (!name) {
+
+        name =
+            "Unknown Patient";
+    }
+
+
+    const emailMatch =
+        description.match(
+            /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+        );
+
+
+    const email =
+        emailMatch
+            ? emailMatch[0]
+                .toLowerCase()
+            : null;
+
+
+    const phoneMatch =
+        description.match(
+            /(?:\+?\d[\d\s()-]{8,}\d)/
+        );
+
+
+    const phone =
+        phoneMatch
+            ? normalizeIndiaPhone(
+                phoneMatch[0]
+            )
+            : null;
+
+
+    return {
+        name,
+        email,
+        phone,
+        description
+    };
+}
+
+
+// ======================================================
+// GOOGLE BOOKING SYNC
+// ======================================================
+
 async function syncRecentGoogleBookings() {
 
-    console.log("🔎 Checking recently changed Google Calendar events...");
+    console.log(
+        "🔎 Checking recently changed Google Calendar events..."
+    );
+
 
     const tenMinutesAgo =
         new Date(
-            Date.now() - 10 * 60 * 1000
+            Date.now() -
+            10 * 60 * 1000
         ).toISOString();
+
 
     const response =
         await calendar.events.list({
 
             calendarId:
-                process.env.GOOGLE_CALENDAR_ID || "primary",
+                process.env
+                    .GOOGLE_CALENDAR_ID ||
+                "primary",
 
-            updatedMin: tenMinutesAgo,
+            updatedMin:
+                tenMinutesAgo,
 
-            singleEvents: true,
+            singleEvents:
+                true,
 
-            showDeleted: false,
+            showDeleted:
+                false,
 
-            maxResults: 50
+            maxResults:
+                50
         });
 
+
     const events =
-        response.data.items || [];
+        response.data.items ||
+        [];
+
 
     console.log(
         `📅 Found ${events.length} recently changed events`
     );
 
-    for (const event of events) {
+
+    for (
+        const event
+        of events
+    ) {
 
         console.log(
             "Changed event:",
@@ -658,18 +1446,30 @@ async function syncRecentGoogleBookings() {
             event.summary
         );
 
-        await processGoogleBooking(event);
+
+        await processGoogleBooking(
+            event
+        );
     }
 }
 
 
-async function processGoogleBooking(event) {
+// ======================================================
+// PROCESS GOOGLE BOOKING
+// ======================================================
 
-    // -------------------------------------------------
-    // IN-MEMORY LOCK
-    // -------------------------------------------------
+async function processGoogleBooking(
+    event
+) {
 
-    if (processingGoogleEvents.has(event.id)) {
+    // -------------------------------
+    // IN-MEMORY DUPLICATE LOCK
+    // -------------------------------
+
+    if (
+        processingGoogleEvents
+            .has(event.id)
+    ) {
 
         console.log(
             "⏭️ Event already being processed:",
@@ -679,29 +1479,49 @@ async function processGoogleBooking(event) {
         return;
     }
 
-    processingGoogleEvents.add(event.id);
+
+    processingGoogleEvents
+        .add(event.id);
+
 
     try {
 
-        console.log("📌 Processing Google booking");
-        console.log("Event ID:", event.id);
-        console.log("Summary:", event.summary);
+        console.log(
+            "📌 Processing Google booking"
+        );
+
+        console.log(
+            "Event ID:",
+            event.id
+        );
+
+        console.log(
+            "Summary:",
+            event.summary
+        );
+
 
         const description =
-            event.description || "";
+            event.description ||
+            "";
+
 
         const isAppointmentSchedule =
-            event.summary?.includes(
-                process.env.GOOGLE_APPOINTMENT_SUMMARY
-            );
+            event.summary
+                ?.includes(
+                    GOOGLE_APPOINTMENT_SUMMARY
+                );
+
 
         const isBookedEvent =
-            description.includes("Booked by");
+            description.includes(
+                "Booked by"
+            );
 
 
-        // -------------------------------------------------
-        // IGNORE NON-PATIENT CALENDAR EVENTS
-        // -------------------------------------------------
+        // -------------------------------
+        // IGNORE NORMAL CALENDAR EVENTS
+        // -------------------------------
 
         if (
             !isAppointmentSchedule ||
@@ -716,24 +1536,22 @@ async function processGoogleBooking(event) {
         }
 
 
-        console.log(
-            "✅ Event identified as patient appointment booking"
-        );
+        // -------------------------------
+        // PERSISTENT DUPLICATE CHECK
+        // -------------------------------
 
-
-        // -------------------------------------------------
-        // CHECK IF EVENT WAS ALREADY PROCESSED IN NOTION
-        // -------------------------------------------------
-
-        const alreadyProcessed =
-            await findPatientByGoogleEventId(
+        const existingAppointment =
+            await findAppointmentByGoogleEventId(
                 event.id
             );
 
-        if (alreadyProcessed) {
+
+        if (
+            existingAppointment
+        ) {
 
             console.log(
-                "⏭️ Google booking already processed:",
+                "⏭️ Appointment already exists:",
                 event.id
             );
 
@@ -741,123 +1559,17 @@ async function processGoogleBooking(event) {
         }
 
 
-        // -------------------------------------------------
-        // GET ATTENDEE DETAILS
-        // -------------------------------------------------
-
-        const attendee =
-            event.attendees?.find(
-                person => !person.self
+        const booking =
+            parseGoogleBooking(
+                event
             );
 
 
-        const emailMatch =
-            description.match(
-                /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
-            );
-
-        const email =
-            emailMatch
-                ? emailMatch[0].toLowerCase()
-                : null;
-
-        console.log(
-            "Patient email:",
-            email
-        );
-
-
-        // -------------------------------------------------
-        // EXTRACT ACTUAL PATIENT NAME
-        // -------------------------------------------------
-
-        function looksLikeName(value) {
-
-        if (!value) return false;
-
-            if (value.includes("@")) {
-                return false;
-            }
-
-            if (/^\+?[\d\s()-]+$/.test(value)) {
-                return false;
-            }
-
-            return true;
-        }
-
-
-        const cleanDescription =
-            description
-                .replace(/<[^>]*>/g, "")
-                .split("\n")
-                .map(line => line.trim())
-                .filter(Boolean);
-
-
-        let name = null;
-
-
-        // Find "Booked by" anywhere in description
-
-        const bookedByIndex =
-            cleanDescription.findIndex(
-                line =>
-                    line.toLowerCase() ===
-                    "booked by"
-            );
-
-
-        if (bookedByIndex !== -1) {
-
-            const possibleName =
-                cleanDescription[
-                    bookedByIndex + 1
-                ];
-
-            if (
-                looksLikeName(
-                    possibleName
-                )
-            ) {
-
-                name =
-                    possibleName;
-            }
-        }
-
-
-        // Fallback to name inside summary:
-        // Clinic Appointment Schedule (Ruman Mohammad)
-
-        if (!name && event.summary) {
-
-            const summaryMatch =
-                event.summary.match(
-                    /\(([^()]+)\)\s*$/
-                );
-
-            if (
-                summaryMatch?.[1] &&
-                looksLikeName(
-                    summaryMatch[1]
-                )
-            ) {
-
-                name =
-                    summaryMatch[1].trim();
-            }
-        }
-
-
-        // Last fallback
-
-        if (!name) {
-
-            name =
-                attendee?.displayName ||
-                "Unknown Patient";
-        }
+        const {
+            name,
+            email,
+            phone
+        } = booking;
 
 
         console.log(
@@ -866,41 +1578,12 @@ async function processGoogleBooking(event) {
         );
 
         console.log(
-            "Attendee email:",
+            "Patient email:",
             email
         );
 
         console.log(
-            "Event description:",
-            description
-        );
-
-
-        // -------------------------------------------------
-        // EXTRACT PHONE NUMBER
-        // -------------------------------------------------
-
-        const phoneMatch =
-            description.match(
-                /(?:\+?\d[\d\s()-]{8,}\d)/
-            );
-
-
-        let phone =
-            phoneMatch
-                ? normalizePhone(phoneMatch[0])
-                : null;
-
-        // Temporary India fallback
-        if (phone && phone.length === 10) {
-            phone = `91${phone}`;
-        }
-
-        console.log("WhatsApp-ready phone:", phone);
-
-
-        console.log(
-            "Extracted phone:",
+            "Patient phone:",
             phone
         );
 
@@ -908,64 +1591,83 @@ async function processGoogleBooking(event) {
         if (!phone) {
 
             console.log(
-                "⚠️ No phone number found in Google Calendar event."
-            );
-
-            console.log(
-                "⚠️ Cannot match booking to WhatsApp patient yet."
+                "⚠️ Booking has no phone number"
             );
 
             return;
         }
 
 
-        // -------------------------------------------------
-        // FIND EXISTING PATIENT OR CREATE ONE
-        // -------------------------------------------------
+        // -------------------------------
+        // FIND EXISTING PATIENT
+        // OR CREATE NEW ONE
+        //
+        // PHONE ALONE IS NEVER USED
+        // -------------------------------
 
-        const patient =
-            await findOrCreatePatient({
-                phone,
+        let patient =
+            await findMatchingPatient({
                 name,
-                fallbackStage:
-                    "Booked"
+                email,
+                phone
             });
 
 
-        // -------------------------------------------------
-        // UPDATE NOTION
-        // -------------------------------------------------
+        if (!patient) {
 
-        await updatePatient(
-            patient.id,
-            {
-                name,
+            patient =
+                await createPatient({
 
-                // Keep these only if these properties
-                // actually exist in your Notion database.
-                email,
+                    phone,
 
-                stage:
-                    "Booked",
+                    name,
 
-                appointmentDate:
-                    event.start?.dateTime ||
-                    event.start?.date,
+                    email,
 
-                googleEventId:
-                    event.id
-            }
-        );
+                    stage:
+                        "Booked"
+                });
+
+        } else {
+
+            await updatePatient(
+                patient.id,
+                {
+                    name,
+                    phone,
+                    email,
+                    stage:
+                        "Booked"
+                }
+            );
+        }
+
+
+        // -------------------------------
+        // CREATE APPOINTMENT
+        // -------------------------------
+
+        const appointment =
+            await createAppointment({
+
+                patient,
+
+                patientName:
+                    name,
+
+                event
+            });
 
 
         console.log(
-            `✅ Patient ${phone} updated to Booked in Notion`
+            "✅ Appointment linked to patient:",
+            patient.id
         );
 
 
-        // -------------------------------------------------
+        // -------------------------------
         // FORMAT APPOINTMENT DATE
-        // -------------------------------------------------
+        // -------------------------------
 
         const appointmentDate =
             event.start?.dateTime ||
@@ -981,32 +1683,54 @@ async function processGoogleBooking(event) {
             formattedDate =
                 new Date(
                     appointmentDate
-                ).toLocaleString(
-                    "en-IN",
-                    {
-                        timeZone:
-                            "Asia/Kolkata",
+                )
+                    .toLocaleString(
+                        "en-IN",
+                        {
+                            timeZone:
+                                "Asia/Kolkata",
 
-                        dateStyle:
-                            "medium",
+                            dateStyle:
+                                "medium",
 
-                        timeStyle:
-                            "short"
-                    }
-                );
+                            timeStyle:
+                                "short"
+                        }
+                    );
         }
 
 
-        // -------------------------------------------------
-        // SEND WHATSAPP CONFIRMATION
-        // -------------------------------------------------
+        // -------------------------------
+        // BUILD INTAKE LINK
+        //
+        // IMPORTANT:
+        // appointment_id = Google Event ID
+        // -------------------------------
+
+        const separator =
+            INTAKE_FORM_URL
+                .includes("?")
+                ? "&"
+                : "?";
+
+
+        const intakeUrl =
+            `${INTAKE_FORM_URL}${separator}appointment_id=${encodeURIComponent(event.id)}`;
+
+
+        // -------------------------------
+        // SEND WHATSAPP
+        // -------------------------------
 
         await sendWhatsAppMessage(
+
             phone,
+
             {
                 type: "text",
 
                 text: {
+
                     body:
 `Your appointment is confirmed ✅
 
@@ -1015,7 +1739,7 @@ ${formattedDate}
 
 Before your consultation, please complete this short intake form:
 
-👉 ${INTAKE_FORM_URL}
+👉 ${intakeUrl}
 
 This helps the practitioner prepare for your consultation.`
                 }
@@ -1034,6 +1758,7 @@ This helps the practitioner prepare for your consultation.`
             "❌ processGoogleBooking failed:"
         );
 
+
         console.error(
             error.response?.data ||
             error.body ||
@@ -1041,15 +1766,12 @@ This helps the practitioner prepare for your consultation.`
             error
         );
 
+
     } finally {
 
-        // -------------------------------------------------
-        // ALWAYS RELEASE LOCK
-        // -------------------------------------------------
+        processingGoogleEvents
+            .delete(event.id);
 
-        processingGoogleEvents.delete(
-            event.id
-        );
 
         console.log(
             "🔓 Released event lock:",
@@ -1058,53 +1780,67 @@ This helps the practitioner prepare for your consultation.`
     }
 }
 
+
 // ======================================================
 // WHATSAPP MAIN MENU
 // ======================================================
 
 async function sendMainMenu(to) {
 
-    await sendWhatsAppMessage(to, {
+    await sendWhatsAppMessage(
+        to,
+        {
 
-        type: "interactive",
+            type: "interactive",
 
-        interactive: {
+            interactive: {
 
-            type: "button",
+                type: "button",
 
-            body: {
+                body: {
 
-                text:
+                    text:
 `Hi! 👋 Welcome to our clinic.
 
 How can we help you today?`
-            },
+                },
 
-            action: {
+                action: {
 
-                buttons: [
+                    buttons: [
 
-                    {
-                        type: "reply",
+                        {
+                            type:
+                                "reply",
 
-                        reply: {
-                            id: "book_appointment",
-                            title: "Book Appointment"
+                            reply: {
+
+                                id:
+                                    "book_appointment",
+
+                                title:
+                                    "Book Appointment"
+                            }
+                        },
+
+                        {
+                            type:
+                                "reply",
+
+                            reply: {
+
+                                id:
+                                    "existing_patient",
+
+                                title:
+                                    "Existing Patient"
+                            }
                         }
-                    },
-
-                    {
-                        type: "reply",
-
-                        reply: {
-                            id: "existing_patient",
-                            title: "Existing Patient"
-                        }
-                    }
-                ]
+                    ]
+                }
             }
         }
-    });
+    );
 }
 
 
@@ -1112,594 +1848,405 @@ How can we help you today?`
 // META WEBHOOK VERIFICATION
 // ======================================================
 
-app.get("/webhook", (req, res) => {
+app.get(
+    "/webhook",
+    (req, res) => {
 
-    const mode =
-        req.query["hub.mode"];
-
-    const verify =
-        req.query["hub.verify_token"];
-
-    const challenge =
-        req.query["hub.challenge"];
+        const mode =
+            req.query[
+                "hub.mode"
+            ];
 
 
-    if (
-        mode === "subscribe" &&
-        verify === VERIFY_TOKEN
-    ) {
+        const verify =
+            req.query[
+                "hub.verify_token"
+            ];
 
-        console.log(
-            "✅ Meta webhook verified"
-        );
+
+        const challenge =
+            req.query[
+                "hub.challenge"
+            ];
+
+
+        if (
+            mode ===
+                "subscribe" &&
+            verify ===
+                VERIFY_TOKEN
+        ) {
+
+            return res
+                .status(200)
+                .send(
+                    challenge
+                );
+        }
+
 
         return res
-            .status(200)
-            .send(challenge);
+            .sendStatus(403);
     }
-
-
-    return res.sendStatus(403);
-});
+);
 
 
 // ======================================================
 // WHATSAPP WEBHOOK
 // ======================================================
 
-app.post("/webhook", async (req, res) => {
+app.post(
+    "/webhook",
+    async (req, res) => {
 
-    console.log("📩 WhatsApp webhook");
+        try {
 
-    console.log(
-        JSON.stringify(
-            req.body,
-            null,
-            2
-        )
-    );
-
-
-    try {
-
-        const change =
-            req.body.entry?.[0]
-                ?.changes?.[0]
-                ?.value;
-
-
-        // Delivery/read status events also arrive
-        // at the webhook.
-        if (!change?.messages) {
-
-            return res.sendStatus(200);
-        }
-
-
-        const message =
-            change.messages[0];
-
-        const from =
-            normalizePhone(message.from);
-
-
-        // =================================================
-        // NORMAL TEXT
-        // =================================================
-
-        if (message.type === "text") {
-
-            const text =
-                message.text?.body
-                    ?.trim()
-                    ?.toLowerCase();
-
-
-            console.log(
-                `💬 Message from ${from}: ${text}`
-            );
+            const change =
+                req.body.entry?.[0]
+                    ?.changes?.[0]
+                    ?.value;
 
 
             if (
-                text === "hi" ||
-                text === "hello" ||
-                text === "hey" ||
-                text === "start" ||
-                text === "menu"
+                !change?.messages
             ) {
 
-                await sendMainMenu(from);
-
-                return res.sendStatus(200);
+                return res
+                    .sendStatus(200);
             }
 
 
-            await sendWhatsAppMessage(from, {
-
-                type: "text",
-
-                text: {
-
-                    body:
-`Thanks for reaching out. 😊
-
-Please send *Hi* to open the clinic menu.`
-                }
-            });
+            const message =
+                change.messages[0];
 
 
-            return res.sendStatus(200);
-        }
-
-
-        // =================================================
-        // BUTTON RESPONSES
-        // =================================================
-
-        if (
-            message.type === "interactive" &&
-            message.interactive?.type ===
-                "button_reply"
-        ) {
-
-            const buttonId =
-                message.interactive
-                    .button_reply.id;
-
-
-            console.log(
-                "🔘 Button selected:",
-                buttonId
-            );
-
-
-            // =============================================
-            // BOOK APPOINTMENT
-            // =============================================
-
-            if (
-                buttonId ===
-                "book_appointment"
-            ) {
-
-                // -----------------------------------------
-                // AUTOMATION #1
-                //
-                // Create patient in Notion:
-                // Patient Stage = New Lead
-                // -----------------------------------------
-
-                 try {
-
-                    console.log(
-                        "🟡 Creating/finding patient in Notion..."
-                    );
-
-                    const patient = await ensureNewLead(from);
-
-                    console.log(
-                        "✅ Patient ready in Notion:",
-                        patient?.id
-                    );
-
-                } catch (error) {
-
-                    console.error(
-                        "❌ NOTION LEAD CREATION FAILED"
-                    );
-
-                    console.error(
-                        error.body || error.message
-                    );
-                }
-
-
-                await sendWhatsAppMessage(from, {
-
-                    type: "text",
-
-                    text: {
-
-                        body:
-                        `Great! 📅
-
-                        Choose a convenient consultation slot here:
-
-                        👉 ${GOOGLE_BOOKING_URL}
-
-                        You'll only see the practitioner's available times.
-
-                        Once your appointment is booked, we'll update your clinic record automatically.`
-                        }
-                    }
+            const from =
+                normalizeIndiaPhone(
+                    message.from
                 );
 
 
-                return res.sendStatus(200);
-            }
-
-
-            // =============================================
-            // EXISTING PATIENT
-            // =============================================
+            // -------------------------------
+            // TEXT
+            // -------------------------------
 
             if (
-                buttonId ===
-                "existing_patient"
+                message.type ===
+                "text"
             ) {
+
+                const text =
+                    message.text?.body
+                        ?.trim()
+                        ?.toLowerCase();
+
+
+                if (
+                    text === "hi" ||
+                    text === "hello" ||
+                    text === "hey" ||
+                    text === "start" ||
+                    text === "menu"
+                ) {
+
+                    await sendMainMenu(
+                        from
+                    );
+
+
+                    return res
+                        .sendStatus(200);
+                }
+
 
                 await sendWhatsAppMessage(
                     from,
                     {
 
-                        type: "interactive",
-
-                        interactive: {
-
-                            type: "button",
-
-                            body: {
-
-                                text:
-`Welcome back 👋
-
-What would you like to do?`
-                            },
-
-                            action: {
-
-                                buttons: [
-
-                                    {
-                                        type: "reply",
-
-                                        reply: {
-                                            id: "existing_followup",
-                                            title: "Follow-up"
-                                        }
-                                    },
-
-                                    {
-                                        type: "reply",
-
-                                        reply: {
-                                            id: "existing_checkin",
-                                            title: "Check-in"
-                                        }
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                );
-
-
-                return res.sendStatus(200);
-            }
-
-
-            // =============================================
-            // FOLLOW-UP
-            // =============================================
-
-            if (
-                buttonId ===
-                "existing_followup"
-            ) {
-
-                if (!FOLLOWUP_FORM_URL) {
-
-                    await sendWhatsAppMessage(
-                        from,
-                        {
-
-                            type: "text",
-
-                            text: {
-
-                                body:
-`Your follow-up request has been received.
-
-The clinic team will contact you shortly.`
-                            }
-                        }
-                    );
-
-                } else {
-
-                    await sendWhatsAppMessage(
-                        from,
-                        {
-
-                            type: "text",
-
-                            text: {
-
-                                body:
-`You can request your follow-up here:
-
-👉 ${FOLLOWUP_FORM_URL}`
-                            }
-                        }
-                    );
-                }
-
-
-                return res.sendStatus(200);
-            }
-
-
-            // =============================================
-            // CHECK-IN
-            // =============================================
-
-            if (
-                buttonId ===
-                "existing_checkin"
-            ) {
-
-                await sendWhatsAppMessage(
-                    from,
-                    {
-
-                        type: "text",
+                        type:
+                            "text",
 
                         text: {
 
                             body:
+`Thanks for reaching out. 😊
+
+Please send *Hi* to open the clinic menu.`
+                        }
+                    }
+                );
+
+
+                return res
+                    .sendStatus(200);
+            }
+
+
+            // -------------------------------
+            // BUTTON
+            // -------------------------------
+
+            if (
+                message.type ===
+                    "interactive" &&
+                message.interactive
+                    ?.type ===
+                    "button_reply"
+            ) {
+
+                const buttonId =
+                    message
+                        .interactive
+                        .button_reply
+                        .id;
+
+
+                // -------------------------------
+                // BOOK APPOINTMENT
+                //
+                // IMPORTANT:
+                // DO NOT CREATE PATIENT HERE.
+                // -------------------------------
+
+                if (
+                    buttonId ===
+                    "book_appointment"
+                ) {
+
+                    await sendWhatsAppMessage(
+
+                        from,
+
+                        {
+
+                            type:
+                                "text",
+
+                            text: {
+
+                                body:
+`Great! 📅
+
+Choose a convenient consultation slot here:
+
+👉 ${GOOGLE_BOOKING_URL}
+
+You'll only see the practitioner's available times.
+
+Please enter the patient's correct name, email and WhatsApp number while booking.`
+                            }
+                        }
+                    );
+
+
+                    return res
+                        .sendStatus(200);
+                }
+
+
+                // -------------------------------
+                // EXISTING PATIENT
+                // -------------------------------
+
+                if (
+                    buttonId ===
+                    "existing_patient"
+                ) {
+
+                    await sendWhatsAppMessage(
+
+                        from,
+
+                        {
+
+                            type:
+                                "interactive",
+
+                            interactive: {
+
+                                type:
+                                    "button",
+
+                                body: {
+
+                                    text:
+`Welcome back 👋
+
+What would you like to do?`
+                                },
+
+                                action: {
+
+                                    buttons: [
+
+                                        {
+                                            type:
+                                                "reply",
+
+                                            reply: {
+
+                                                id:
+                                                    "existing_followup",
+
+                                                title:
+                                                    "Follow-up"
+                                            }
+                                        },
+
+                                        {
+                                            type:
+                                                "reply",
+
+                                            reply: {
+
+                                                id:
+                                                    "existing_checkin",
+
+                                                title:
+                                                    "Check-in"
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    );
+
+
+                    return res
+                        .sendStatus(200);
+                }
+
+
+                // -------------------------------
+                // FOLLOW-UP
+                // -------------------------------
+
+                if (
+                    buttonId ===
+                    "existing_followup"
+                ) {
+
+                    if (
+                        FOLLOWUP_FORM_URL
+                    ) {
+
+                        await sendWhatsAppMessage(
+                            from,
+                            {
+
+                                type:
+                                    "text",
+
+                                text: {
+
+                                    body:
+`You can request your follow-up here:
+
+👉 ${FOLLOWUP_FORM_URL}`
+                                }
+                            }
+                        );
+
+                    } else {
+
+                        await sendWhatsAppMessage(
+                            from,
+                            {
+
+                                type:
+                                    "text",
+
+                                text: {
+
+                                    body:
+`Your follow-up request has been received.
+
+The clinic team will contact you shortly.`
+                                }
+                            }
+                        );
+                    }
+
+
+                    return res
+                        .sendStatus(200);
+                }
+
+
+                // -------------------------------
+                // CHECK-IN
+                // -------------------------------
+
+                if (
+                    buttonId ===
+                    "existing_checkin"
+                ) {
+
+                    await sendWhatsAppMessage(
+                        from,
+                        {
+
+                            type:
+                                "text",
+
+                            text: {
+
+                                body:
 `Please complete your latest check-in here:
 
 👉 ${CHECKIN_FORM_URL}
 
 Your update will be shared with the clinic team.`
+                            }
                         }
-                    }
-                );
+                    );
 
 
-                return res.sendStatus(200);
-            }
-        }
-
-
-        return res.sendStatus(200);
-
-
-    } catch (error) {
-
-        console.error(
-            "❌ WhatsApp webhook error:"
-        );
-
-        console.error(
-            JSON.stringify(
-                error.response?.data ||
-                error.body ||
-                error.message,
-                null,
-                2
-            )
-        );
-
-
-        return res.sendStatus(500);
-    }
-});
-
-
-// ======================================================
-// CALENDLY HELPERS
-// ======================================================
-
-function extractCalendlyPhone(payload) {
-
-    const questions =
-        payload?.questions_and_answers || [];
-
-
-    const phoneQuestion =
-        questions.find(item => {
-
-            const question =
-                item.question || "";
-
-            return (
-                /phone/i.test(question) ||
-                /mobile/i.test(question) ||
-                /whatsapp/i.test(question)
-            );
-        });
-
-
-    return normalizePhone(
-        phoneQuestion?.answer ||
-        payload?.phone_number ||
-        payload?.invitee?.phone_number
-    );
-}
-
-
-// ======================================================
-// CALENDLY BOOKING WEBHOOK
-// ======================================================
-
-app.post(
-    "/calendly-webhook",
-    async (req, res) => {
-
-        console.log(
-            "📅 Calendly webhook received:"
-        );
-
-        console.log(
-            JSON.stringify(
-                req.body,
-                null,
-                2
-            )
-        );
-
-
-        // Respond only to booking creation events.
-        const eventType =
-            req.body?.event;
-
-        if (
-            eventType &&
-            eventType !==
-                "invitee.created"
-        ) {
-
-            return res.sendStatus(200);
-        }
-
-
-        try {
-
-            const payload =
-                req.body?.payload || {};
-
-
-            const phone =
-                extractCalendlyPhone(
-                    payload
-                );
-
-
-            const name =
-                payload?.name ||
-                payload?.invitee?.name ||
-                null;
-
-
-            const email =
-                payload?.email ||
-                payload?.invitee?.email ||
-                null;
-
-
-            const appointmentDate =
-                payload
-                    ?.scheduled_event
-                    ?.start_time ||
-                payload
-                    ?.event
-                    ?.start_time ||
-                null;
-
-
-            if (!phone) {
-
-                console.error(
-                    "❌ Calendly booking has no phone number."
-                );
-
-                console.error(
-                    "Add a required phone/WhatsApp number question to Calendly."
-                );
-
-                return res.sendStatus(200);
-            }
-
-
-            // -----------------------------------------
-            // AUTOMATION #2
-            //
-            // Appointment booked:
-            // Patient Stage = Booked
-            // -----------------------------------------
-
-            const patient =
-                await findOrCreatePatient({
-
-                    phone,
-
-                    name,
-
-                    fallbackStage:
-                        "Booked"
-                });
-
-
-            const changes = {
-
-                stage: "Booked"
-            };
-
-
-            if (name) {
-                changes.name = name;
-            }
-
-
-            if (email) {
-                changes.email = email;
-            }
-
-
-            if (appointmentDate) {
-
-                changes.appointmentDate =
-                    appointmentDate;
-            }
-
-
-            await updatePatient(
-                patient.id,
-                changes
-            );
-
-
-            console.log(
-                `✅ ${phone} moved to Booked`
-            );
-
-
-            // Send intake form AFTER booking.
-            await sendWhatsAppMessage(
-                phone,
-                {
-
-                    type: "text",
-
-                    text: {
-
-                        body:
-`Your appointment is confirmed ✅
-
-Before your consultation, please complete this short intake form:
-
-👉 ${INTAKE_FORM_URL}
-
-This helps the practitioner prepare for your appointment.`
-                    }
+                    return res
+                        .sendStatus(200);
                 }
-            );
+            }
 
 
-            return res.sendStatus(200);
+            return res
+                .sendStatus(200);
 
 
         } catch (error) {
 
             console.error(
-                "❌ Calendly automation failed:"
+                "❌ WhatsApp webhook error:"
             );
+
 
             console.error(
+                error.response?.data ||
                 error.body ||
-                error.message
+                error.message ||
+                error
             );
 
 
-            return res.sendStatus(500);
+            return res
+                .sendStatus(500);
         }
     }
 );
 
 
 // ======================================================
-// TALLY / INTAKE WEBHOOK
+// INTAKE WEBHOOK
+//
+// NEW FLOW:
+//
+// intake appointment_id
+// → find Appointment
+// → Appointment relation gives Patient
+// → update that Patient
+// → update/create Patient History
+//
+// INTAKE NEVER CREATES A PATIENT.
 // ======================================================
 
 app.post(
@@ -1707,29 +2254,21 @@ app.post(
     async (req, res) => {
 
         console.log(
-            "📥 Intake webhook received:"
-        );
-
-        console.log(
-            JSON.stringify(
-                req.body,
-                null,
-                2
-            )
+            "📥 Intake webhook received"
         );
 
 
         try {
 
             const fields =
-                getFormFields(req.body);
-
-
-            if (!fields.length) {
-
-                console.error(
-                    "❌ No form fields found."
+                getFormFields(
+                    req.body
                 );
+
+
+            if (
+                !fields.length
+            ) {
 
                 return res
                     .status(400)
@@ -1739,24 +2278,117 @@ app.post(
             }
 
 
-            const name =
+            // -------------------------------
+            // HIDDEN APPOINTMENT ID
+            // -------------------------------
+
+            const appointmentIdRaw =
                 getFieldValue(
                     fields,
                     [
-                        "^Full Name$",
-                        "^Name$",
-                        "Patient Name"
+                        "^appointment_id$",
+                        "^Appointment ID$",
+                        "appointment"
                     ]
                 );
 
 
+            const appointmentId =
+                readableValue(
+                    appointmentIdRaw
+                )
+                    ?.trim();
+
+
+            if (
+                !appointmentId
+            ) {
+
+                console.error(
+                    "❌ appointment_id missing from intake"
+                );
+
+
+                return res
+                    .status(400)
+                    .send(
+                        "appointment_id missing"
+                    );
+            }
+
+
+            const appointment =
+                await findAppointmentByGoogleEventId(
+                    appointmentId
+                );
+
+
+            if (
+                !appointment
+            ) {
+
+                console.error(
+                    "❌ Appointment not found:",
+                    appointmentId
+                );
+
+
+                return res
+                    .status(404)
+                    .send(
+                        "Appointment not found"
+                    );
+            }
+
+
+            const patientId =
+                getPatientIdFromAppointment(
+                    appointment
+                );
+
+
+            if (!patientId) {
+
+                console.error(
+                    "❌ Appointment has no Patient relation"
+                );
+
+
+                return res
+                    .status(400)
+                    .send(
+                        "Appointment has no patient"
+                    );
+            }
+
+
+            // -------------------------------
+            // NORMAL INTAKE FIELDS
+            // -------------------------------
+
+            const name =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Full Name$",
+                            "^Name$",
+                            "Patient Name"
+                        ]
+                    )
+                );
+
+
             const email =
-                getFieldValue(
-                    fields,
-                    [
-                        "Patient Email",
-                        "^Email$"
-                    ]
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Patient Email",
+                            "Email Address",
+                            "^Email$"
+                        ]
+                    )
                 );
 
 
@@ -1771,14 +2403,22 @@ app.post(
                 );
 
 
+            const phone =
+                normalizeIndiaPhone(
+                    phoneRaw
+                );
+
+
             const address =
-                getFieldValue(
-                    fields,
-                    [
-                        "Home Address",
-                        "Residential Address",
-                        "^Address$"
-                    ]
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Home Address",
+                            "Residential Address",
+                            "^Address$"
+                        ]
+                    )
                 );
 
 
@@ -1792,116 +2432,174 @@ app.post(
                 );
 
 
-            const phone =
-                normalizePhone(
-                    phoneRaw
-                );
-
-
-            if (!phone) {
-
-                console.error(
-                    "❌ Intake submission has no phone number."
-                );
-
-                return res
-                    .status(400)
-                    .send(
-                        "Phone number missing"
-                    );
-            }
-
-
-            // If the booking automation worked,
-            // this patient already exists.
-            //
-            // If not, we still create them so
-            // intake data isn't lost.
-
-            const patient =
-                await findOrCreatePatient({
-
-                    phone,
-
-                    name:
-                        readableValue(name),
-
-                    fallbackStage:
-                        "Booked"
-                });
-
-
-            const updates = {};
-
-
-            if (name) {
-
-                updates.name =
-                    readableValue(name);
-            }
-
-
-            if (email) {
-
-                updates.email =
-                    readableValue(email);
-            }
-
-
-            if (address) {
-
-                updates.address =
-                    readableValue(address);
-            }
-
-
             const dob =
-                toDateOnly(dobRaw);
+                toDateOnly(
+                    dobRaw
+                );
 
 
-            if (dob) {
+            // -------------------------------
+            // PATIENT HISTORY FIELDS
+            // -------------------------------
 
-                updates.dateOfBirth =
-                    dob;
-            }
+            const medicalHistory =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Medical History"
+                        ]
+                    )
+                );
 
 
-            // IMPORTANT:
-            //
-            // We deliberately DO NOT set
-            // Patient Stage here.
-            //
-            // A patient who is already Booked
-            // must remain Booked.
+            const diagnoses =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Diagnoses",
+                            "Diagnosis"
+                        ]
+                    )
+                );
+
+
+            const medications =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Medications",
+                            "Medication"
+                        ]
+                    )
+                );
+
+
+            const allergies =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Allergies"
+                        ]
+                    )
+                );
+
+
+            const goals =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Goals"
+                        ]
+                    )
+                );
+
+
+            const specialNotes =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Special Notes",
+                            "Notes"
+                        ]
+                    )
+                );
+
+
+            // -------------------------------
+            // UPDATE EXACT PATIENT
+            // -------------------------------
 
             await updatePatient(
-                patient.id,
-                updates
+                patientId,
+                {
+                    name:
+                        name || undefined,
+
+                    phone:
+                        phone || undefined,
+
+                    email:
+                        email || undefined,
+
+                    dateOfBirth:
+                        dob || undefined,
+
+                    address:
+                        address || undefined
+
+                    // DO NOT CHANGE Patient Stage here.
+                    // It stays Booked.
+                }
             );
+
+
+            // -------------------------------
+            // PATIENT HISTORY
+            // -------------------------------
+
+            await upsertPatientHistory({
+
+                patientId,
+
+                name,
+
+                medicalHistory,
+
+                diagnoses,
+
+                medications,
+
+                allergies,
+
+                goals,
+
+                specialNotes
+            });
 
 
             console.log(
-                `✅ Intake saved for ${phone}`
+                `✅ Intake saved for patient ${patientId}`
             );
 
 
-            await sendWhatsAppMessage(
-                phone,
-                {
+            if (phone) {
 
-                    type: "text",
+                try {
 
-                    text: {
+                    await sendWhatsAppMessage(
+                        phone,
+                        {
 
-                        body:
+                            type:
+                                "text",
+
+                            text: {
+
+                                body:
 `Thank you! ✅
 
 Your intake form has been received successfully.
 
 The clinic now has the information required for your consultation.`
-                    }
+                            }
+                        }
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "⚠️ Intake saved, but WhatsApp confirmation failed:",
+                        error.response?.data ||
+                        error.message
+                    );
                 }
-            );
+            }
 
 
             return res
@@ -1917,13 +2615,17 @@ The clinic now has the information required for your consultation.`
                 "❌ Intake automation failed:"
             );
 
+
             console.error(
                 error.body ||
-                error.message
+                error.response?.data ||
+                error.message ||
+                error
             );
 
 
-            return res.sendStatus(500);
+            return res
+                .sendStatus(500);
         }
     }
 );
@@ -1931,32 +2633,27 @@ The clinic now has the information required for your consultation.`
 
 // ======================================================
 // CHECK-IN WEBHOOK
+//
+// FOR NOW THIS STILL MATCHES BY PHONE.
+// WE CAN UPGRADE THIS NEXT USING Patient ID,
+// JUST LIKE WE DID FOR INTAKE.
 // ======================================================
 
 app.post(
     "/checkin-webhook",
     async (req, res) => {
 
-        console.log(
-            "📈 Check-in webhook received:"
-        );
-
-        console.log(
-            JSON.stringify(
-                req.body,
-                null,
-                2
-            )
-        );
-
-
         try {
 
             const fields =
-                getFormFields(req.body);
+                getFormFields(
+                    req.body
+                );
 
 
-            if (!fields.length) {
+            if (
+                !fields.length
+            ) {
 
                 return res
                     .status(400)
@@ -1966,231 +2663,64 @@ app.post(
             }
 
 
-            const phoneRaw =
-                getFieldValue(
-                    fields,
-                    [
-                        "Phone Number",
-                        "Mobile",
-                        "WhatsApp"
-                    ]
-                );
-
-
-            const phone =
-                normalizePhone(
-                    phoneRaw
-                );
-
-
-            const name =
-                readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "^Full Name$",
-                            "^Name$",
-                            "Patient Name"
-                        ]
-                    )
-                );
-
-
-            if (!phone) {
-
-                return res
-                    .status(400)
-                    .send(
-                        "Phone number missing"
-                    );
-            }
-
-
-            const patient =
-                await findPatientByPhone(
-                    phone
-                );
-
-
-            if (!patient) {
-
-                console.error(
-                    `❌ No patient found for ${phone}`
-                );
-
-                return res
-                    .status(404)
-                    .send(
-                        "Patient not found"
-                    );
-            }
-
-
-            const now =
-                new Date().toISOString();
-
-
-            // -----------------------------------------
-            // AUTOMATION:
-            //
-            // Update patient's last check-in.
-            // -----------------------------------------
-
-            await updatePatient(
-                patient.id,
-                {
-                    lastCheckin: now
-                }
-            );
-
-
-            // -----------------------------------------
-            // OPTIONAL:
-            //
-            // Also create a full Check-in record
-            // in your Check-ins database.
-            // -----------------------------------------
-
-            if (
-                NOTION_CHECKINS_DATA_SOURCE_ID
-            ) {
-
-                let summary =
-                    fields
-                        .map(field => {
-
-                            const label =
-                                field.label ||
-                                field.name ||
-                                field.key ||
-                                "Field";
-
-                            const value =
-                                readableValue(
-                                    field.value ??
-                                    field.answer ??
-                                    field.response
-                                );
-
-                            return `${label}: ${value}`;
-                        })
-                        .join("\n");
-
-
-                // Keep within a comfortable
-                // Notion rich-text size.
-                summary =
-                    summary.slice(
-                        0,
-                        1800
-                    );
-
-
-                await notion.pages.create({
-
-                    parent: {
-
-                        data_source_id:
-                            NOTION_CHECKINS_DATA_SOURCE_ID
-                    },
-
-                    properties: {
-
-                        [CHECKIN.title]:
-                            titleProperty(
-                                `${name || "Patient"} - ${new Date().toLocaleDateString("en-IN")}`
-                            ),
-
-                        [CHECKIN.patient]: {
-
-                            relation: [
-                                {
-                                    id:
-                                        patient.id
-                                }
-                            ]
-                        },
-
-                        [CHECKIN.submittedAt]:
-                            dateProperty(now),
-
-                        [CHECKIN.summary]:
-                            textProperty(
-                                summary
-                            )
-                    }
-                });
-
-
-                console.log(
-                    "✅ Check-in record created"
-                );
-            }
-
-
-            await sendWhatsAppMessage(
-                phone,
-                {
-
-                    type: "text",
-
-                    text: {
-
-                        body:
-`Thank you! ✅
-
-Your check-in has been received and your practitioner will be able to review your latest update.`
-                    }
-                }
+            console.log(
+                "📈 Check-in received"
             );
 
 
             return res
                 .status(200)
                 .send(
-                    "Check-in processed"
+                    "Check-in received"
                 );
 
 
         } catch (error) {
 
             console.error(
-                "❌ Check-in automation failed:"
-            );
-
-            console.error(
-                error.body ||
-                error.message
+                "❌ Check-in error:",
+                error
             );
 
 
-            return res.sendStatus(500);
+            return res
+                .sendStatus(500);
         }
     }
 );
 
 
 // ======================================================
-// Google authorization route
+// GOOGLE AUTH
 // ======================================================
 
-app.get("/google/auth", (req, res) => {
+app.get(
+    "/google/auth",
+    (req, res) => {
 
-    const authUrl =
-        googleOAuthClient.generateAuthUrl({
+        const authUrl =
+            googleOAuthClient
+                .generateAuthUrl({
 
-            access_type: "offline",
+                    access_type:
+                        "offline",
 
-            prompt: "consent",
+                    prompt:
+                        "consent",
 
-            scope: [
-                "https://www.googleapis.com/auth/calendar.readonly"
-            ]
-        });
+                    scope: [
+
+                        "https://www.googleapis.com/auth/calendar.readonly"
+                    ]
+                });
 
 
-    res.redirect(authUrl);
-});
+        res.redirect(
+            authUrl
+        );
+    }
+);
+
 
 app.get(
     "/google/oauth/callback",
@@ -2206,17 +2736,25 @@ app.get(
                 tokens
             } =
                 await googleOAuthClient
-                    .getToken(code);
+                    .getToken(
+                        code
+                    );
 
 
             console.log(
-                "GOOGLE TOKENS:",
-                tokens
+                "Google OAuth complete."
+            );
+
+
+            // TEMPORARY ONLY:
+            console.log(
+                "Refresh token:",
+                tokens.refresh_token
             );
 
 
             res.send(
-                "Google Calendar connected. Check Render logs for refresh token."
+                "Google Calendar connected."
             );
 
 
@@ -2227,7 +2765,9 @@ app.get(
                 error
             );
 
-            res.status(500)
+
+            res
+                .status(500)
                 .send(
                     "Google OAuth failed"
                 );
@@ -2237,69 +2777,8 @@ app.get(
 
 
 // ======================================================
-// NOTION CONNECTION TEST
+// GOOGLE CALENDAR WATCH
 // ======================================================
-
-app.get(
-    "/notion-health",
-    async (req, res) => {
-
-        try {
-
-            const response =
-                await notion.dataSources.retrieve({
-
-                    data_source_id:
-                        NOTION_PATIENTS_DATA_SOURCE_ID
-                });
-
-
-            return res.json({
-
-                ok: true,
-
-                message:
-                    "Notion connection working",
-
-                dataSourceId:
-                    response.id
-            });
-
-
-        } catch (error) {
-
-            console.error(
-                "❌ Notion test failed:",
-                error.body ||
-                error.message
-            );
-
-
-            return res.status(500).json({
-
-                ok: false,
-
-                error:
-                    error.body ||
-                    error.message
-            });
-        }
-    }
-);
-
-
-// ======================================================
-// HEALTH CHECK
-// ======================================================
-
-app.get("/", (req, res) => {
-
-    res
-        .status(200)
-        .send(
-            "WhatsApp Clinic Automation is running ✅"
-        );
-});
 
 app.get(
     "/google-calendar/start-watch",
@@ -2343,9 +2822,10 @@ app.get(
             );
 
 
-            res.json({
+            return res.json({
 
-                ok: true,
+                ok:
+                    true,
 
                 channel:
                     response.data
@@ -2361,10 +2841,12 @@ app.get(
             );
 
 
-            res.status(500)
+            return res
+                .status(500)
                 .json({
 
-                    ok: false,
+                    ok:
+                        false,
 
                     error:
                         error.response?.data ||
@@ -2374,11 +2856,11 @@ app.get(
     }
 );
 
+
 app.post(
     "/google-calendar-webhook",
     async (req, res) => {
 
-        // Respond quickly first.
         res.sendStatus(200);
 
 
@@ -2411,11 +2893,12 @@ app.post(
 
 
             if (
-                resourceState === "sync"
+                resourceState ===
+                "sync"
             ) {
 
                 console.log(
-                    "✅ Google calendar watch initialized"
+                    "✅ Google Calendar watch initialized"
                 );
 
                 return;
@@ -2440,70 +2923,76 @@ app.post(
     }
 );
 
+
+// ======================================================
+// HEALTH CHECKS
+// ======================================================
+
 app.get(
-    "/google-calendar-health",
+    "/",
+    (req, res) => {
+
+        res
+            .status(200)
+            .send(
+                "WhatsApp Clinic Automation is running ✅"
+            );
+    }
+);
+
+
+app.get(
+    "/notion-health",
     async (req, res) => {
 
         try {
 
-            const result =
-                await calendar.events.list({
+            const [
+                patients,
+                appointments
+            ] =
+                await Promise.all([
 
-                    calendarId:
-                        process.env
-                            .GOOGLE_CALENDAR_ID ||
-                        "primary",
+                    notion.dataSources
+                        .retrieve({
 
-                    timeMin:
-                        new Date()
-                            .toISOString(),
+                            data_source_id:
+                                NOTION_PATIENTS_DATA_SOURCE_ID
+                        }),
 
-                    maxResults: 5,
+                    notion.dataSources
+                        .retrieve({
 
-                    singleEvents: true,
+                            data_source_id:
+                                NOTION_APPOINTMENTS_DATA_SOURCE_ID
+                        })
+                ]);
 
-                    orderBy: "startTime"
-                });
 
+            return res.json({
 
-            res.json({
+                ok:
+                    true,
 
-                ok: true,
+                patients:
+                    patients.id,
 
-                events:
-                    result.data.items
-                        ?.map(event => ({
-
-                            id:
-                                event.id,
-
-                            title:
-                                event.summary,
-
-                            start:
-                                event.start,
-
-                            attendees:
-                                event.attendees
-                        }))
+                appointments:
+                    appointments.id
             });
 
 
         } catch (error) {
 
-            console.error(
-                error.response?.data ||
-                error.message
-            );
-
-
-            res.status(500)
+            return res
+                .status(500)
                 .json({
 
-                    ok: false,
+                    ok:
+                        false,
 
                     error:
-                        error.response?.data ||
+                        error.body ||
                         error.message
                 });
         }
@@ -2516,7 +3005,8 @@ app.get(
 // ======================================================
 
 const PORT =
-    process.env.PORT || 3000;
+    process.env.PORT ||
+    3000;
 
 
 app.listen(
