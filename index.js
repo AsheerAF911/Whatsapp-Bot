@@ -508,13 +508,21 @@ function getFieldValue(
 // PHONE IS NOT A UNIQUE PATIENT IDENTIFIER.
 // ======================================================
 
-async function findPatientsByName(
-    name
-) {
+async function findPatientsByName(name) {
 
     if (!name) {
+        console.log(
+            "⚠️ findPatientsByName called without name"
+        );
+
         return [];
     }
+
+
+    console.log(
+        "🔎 Querying Notion Patients by name:",
+        JSON.stringify(name)
+    );
 
 
     const response =
@@ -535,10 +543,87 @@ async function findPatientsByName(
         });
 
 
+    console.log(
+        "📦 Notion query returned:",
+        response.results.length,
+        "record(s)"
+    );
+
+
+    for (
+        const item
+        of response.results
+    ) {
+
+        console.log(
+            "-----------------------------"
+        );
+
+        console.log(
+            "Notion page ID:",
+            item.id
+        );
+
+
+        const notionName =
+            item.properties[
+                PATIENT.name
+            ]?.title
+                ?.map(
+                    part =>
+                        part.plain_text
+                )
+                .join("") ||
+            null;
+
+
+        const notionEmail =
+            item.properties[
+                PATIENT.email
+            ]?.email ||
+            null;
+
+
+        const notionPhone =
+            item.properties[
+                PATIENT.phone
+            ]?.rich_text
+                ?.map(
+                    part =>
+                        part.plain_text
+                )
+                .join("") ||
+            null;
+
+
+        console.log(
+            "Name in Notion:",
+            JSON.stringify(
+                notionName
+            )
+        );
+
+        console.log(
+            "Email in Notion:",
+            JSON.stringify(
+                notionEmail
+            )
+        );
+
+        console.log(
+            "Phone in Notion:",
+            JSON.stringify(
+                notionPhone
+            )
+        );
+    }
+
+
     return response.results
         .filter(
             item =>
-                item.object === "page"
+                item.object ===
+                "page"
         );
 }
 
@@ -563,9 +648,12 @@ function getPatientPhoneFromPage(
     return (
         page.properties[
             PATIENT.phone
-        ]
-            ?.rich_text?.[0]
-            ?.plain_text ||
+        ]?.rich_text
+            ?.map(
+                part =>
+                    part.plain_text
+            )
+            .join("") ||
         null
     );
 }
@@ -588,13 +676,53 @@ async function findMatchingPatient({
     phone
 }) {
 
+    console.log(
+        "================================="
+    );
+
+    console.log(
+        "🔎 START PATIENT MATCH"
+    );
+
+
+    console.log(
+        "Incoming name:",
+        JSON.stringify(name)
+    );
+
+    console.log(
+        "Incoming email:",
+        JSON.stringify(email)
+    );
+
+    console.log(
+        "Incoming phone:",
+        JSON.stringify(phone)
+    );
+
+
     const candidates =
         await findPatientsByName(
             name
         );
 
 
+    console.log(
+        "Candidate count:",
+        candidates.length
+    );
+
+
     if (!candidates.length) {
+
+        console.log(
+            "❌ No Notion patients found with this name"
+        );
+
+        console.log(
+            "================================="
+        );
+
         return null;
     }
 
@@ -612,48 +740,150 @@ async function findMatchingPatient({
         );
 
 
+    console.log(
+        "Normalized incoming email:",
+        JSON.stringify(
+            normalizedEmail
+        )
+    );
+
+    console.log(
+        "Normalized incoming phone:",
+        JSON.stringify(
+            normalizedPhone
+        )
+    );
+
+
     for (
         const patient
         of candidates
     ) {
 
-        const patientEmail =
+        console.log(
+            "-----------------------------"
+        );
+
+        console.log(
+            "Checking Notion patient:",
+            patient.id
+        );
+
+
+        const rawPatientEmail =
             getPatientEmailFromPage(
                 patient
-            )
+            );
+
+
+        const rawPatientPhone =
+            getPatientPhoneFromPage(
+                patient
+            );
+
+
+        const patientEmail =
+            rawPatientEmail
                 ?.trim()
-                ?.toLowerCase();
+                ?.toLowerCase() ||
+            null;
 
 
         const patientPhone =
             normalizeIndiaPhone(
-                getPatientPhoneFromPage(
-                    patient
-                )
+                rawPatientPhone
             );
 
 
-        if (
-            normalizedEmail &&
-            patientEmail &&
-            normalizedEmail ===
+        console.log(
+            "Raw Notion email:",
+            JSON.stringify(
+                rawPatientEmail
+            )
+        );
+
+        console.log(
+            "Normalized Notion email:",
+            JSON.stringify(
                 patientEmail
-        ) {
+            )
+        );
 
-            return patient;
-        }
+        console.log(
+            "Raw Notion phone:",
+            JSON.stringify(
+                rawPatientPhone
+            )
+        );
+
+        console.log(
+            "Normalized Notion phone:",
+            JSON.stringify(
+                patientPhone
+            )
+        );
+
+
+        const emailMatches =
+            Boolean(
+                normalizedEmail &&
+                patientEmail &&
+                normalizedEmail ===
+                    patientEmail
+            );
+
+
+        const phoneMatches =
+            Boolean(
+                normalizedPhone &&
+                patientPhone &&
+                normalizedPhone ===
+                    patientPhone
+            );
+
+
+        console.log(
+            "Email matches:",
+            emailMatches
+        );
+
+        console.log(
+            "Phone matches:",
+            phoneMatches
+        );
 
 
         if (
-            normalizedPhone &&
-            patientPhone &&
-            normalizedPhone ===
-                patientPhone
+            emailMatches ||
+            phoneMatches
         ) {
+
+            console.log(
+                "✅ EXISTING PATIENT MATCHED:",
+                patient.id
+            );
+
+            console.log(
+                "================================="
+            );
 
             return patient;
         }
+
+
+        console.log(
+            "❌ Candidate did not match"
+        );
     }
+
+
+    console.log(
+        "❌ No matching patient after checking all candidates"
+    );
+
+    console.log(
+        "================================="
+    );
 
 
     return null;
