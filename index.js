@@ -511,19 +511,23 @@ function getFieldValue(
 async function findPatientsByName(name) {
 
     if (!name) {
-        console.log(
-            "⚠️ findPatientsByName called without name"
-        );
-
         return [];
     }
 
-
     console.log(
-        "🔎 Querying Notion Patients by name:",
+        "🔎 Looking for patient:",
         JSON.stringify(name)
     );
 
+    console.log(
+        "🔎 Patients Data Source ID:",
+        NOTION_PATIENTS_DATA_SOURCE_ID
+    );
+
+
+    // --------------------------------------------------
+    // DEBUG: QUERY PATIENT DATABASE WITHOUT ANY FILTER
+    // --------------------------------------------------
 
     const response =
         await notion.dataSources.query({
@@ -531,38 +535,24 @@ async function findPatientsByName(name) {
             data_source_id:
                 NOTION_PATIENTS_DATA_SOURCE_ID,
 
-            filter: {
-
-                property:
-                    PATIENT.name,
-
-                title: {
-                    equals: name
-                }
-            }
+            page_size: 100
         });
 
 
     console.log(
-        "📦 Notion query returned:",
-        response.results.length,
-        "record(s)"
+        "📦 Total records returned from Patients database:",
+        response.results.length
     );
 
 
-    for (
-        const item
-        of response.results
-    ) {
+    const matches = [];
 
-        console.log(
-            "-----------------------------"
-        );
 
-        console.log(
-            "Notion page ID:",
-            item.id
-        );
+    for (const item of response.results) {
+
+        if (item.object !== "page") {
+            continue;
+        }
 
 
         const notionName =
@@ -573,8 +563,9 @@ async function findPatientsByName(name) {
                     part =>
                         part.plain_text
                 )
-                .join("") ||
-            null;
+                .join("")
+                .trim() ||
+            "";
 
 
         const notionEmail =
@@ -592,39 +583,84 @@ async function findPatientsByName(name) {
                     part =>
                         part.plain_text
                 )
-                .join("") ||
+                .join("")
+                .trim() ||
             null;
 
 
         console.log(
-            "Name in Notion:",
+            "-------------------------"
+        );
+
+        console.log(
+            "Page ID:",
+            item.id
+        );
+
+        console.log(
+            "Patient Name:",
             JSON.stringify(
                 notionName
             )
         );
 
         console.log(
-            "Email in Notion:",
+            "Phone:",
+            JSON.stringify(
+                notionPhone
+            )
+        );
+
+        console.log(
+            "Email:",
             JSON.stringify(
                 notionEmail
             )
         );
 
-        console.log(
-            "Phone in Notion:",
-            JSON.stringify(
-                notionPhone
-            )
-        );
+
+        // ---------------------------------------------
+        // Compare in Node instead of Notion filter
+        // ---------------------------------------------
+
+        const normalizedNotionName =
+            notionName
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, " ");
+
+
+        const normalizedIncomingName =
+            name
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, " ");
+
+
+        if (
+            normalizedNotionName ===
+            normalizedIncomingName
+        ) {
+
+            console.log(
+                "✅ NAME MATCH FOUND:",
+                item.id
+            );
+
+            matches.push(
+                item
+            );
+        }
     }
 
 
-    return response.results
-        .filter(
-            item =>
-                item.object ===
-                "page"
-        );
+    console.log(
+        "✅ Matching patients found:",
+        matches.length
+    );
+
+
+    return matches;
 }
 
 
