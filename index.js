@@ -172,15 +172,20 @@ const HISTORY = {
 
 const CHECKIN = {
 
-    title: "Check-in",
+    title: "Patient Name",
+
+    submittedAt: "Date",
 
     patient: "Patient",
 
-    submittedAt: "Submitted At",
+    dietFollowed: "Diet Followed",
 
-    summary: "Response Summary"
+    sleepQuality: "Sleep Quality",
+
+    activityLevel: "Activity Level",
+
+    notes: "Notes"
 };
-
 
 const FOLLOWUP = {
 
@@ -587,6 +592,17 @@ async function findPatientByNameAndPhone(
 
     return null;
 }
+
+
+function statusProperty(value) {
+
+    return {
+        status: {
+            name: value
+        }
+    };
+}
+
 
 // ======================================================
 // NOTION PROPERTY BUILDERS
@@ -2145,6 +2161,61 @@ app.get("/notion-history-info", async (req, res) => {
     }
 });
 
+app.get(
+    "/notion-checkins-info",
+    async (req, res) => {
+
+        try {
+
+            const response =
+                await notion.databases.retrieve({
+
+                    database_id:
+                        process.env
+                            .NOTION_CHECKINS_DATABASE_ID
+                });
+
+
+            return res.json({
+
+                database_id:
+                    response.id,
+
+                data_sources:
+                    response.data_sources
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "❌ Check-ins database lookup failed:"
+            );
+
+
+            console.error(
+                error.body ||
+                error.response?.data ||
+                error.message ||
+                error
+            );
+
+
+            return res
+                .status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.body ||
+                        error.response?.data ||
+                        error.message
+                });
+        }
+    }
+);
+
 // ======================================================
 // META WEBHOOK VERIFICATION
 // ======================================================
@@ -2973,6 +3044,10 @@ app.post(
     "/checkin-webhook",
     async (req, res) => {
 
+        console.log(
+            "📈 Check-in webhook received"
+        );
+
         try {
 
             const fields =
@@ -2981,9 +3056,11 @@ app.post(
                 );
 
 
-            if (
-                !fields.length
-            ) {
+            if (!fields.length) {
+
+                console.error(
+                    "❌ No check-in fields found"
+                );
 
                 return res
                     .status(400)
@@ -2993,22 +3070,428 @@ app.post(
             }
 
 
+            // =================================================
+            // PATIENT NAME
+            // =================================================
+
+            const name =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Full Name$",
+                            "^Patient Name$",
+                            "^Name$"
+                        ]
+                    )
+                )
+                    .trim();
+
+
+            // =================================================
+            // PHONE NUMBER
+            // =================================================
+
+            const phoneRaw =
+                getFieldValue(
+                    fields,
+                    [
+                        "^Contact Number$",
+                        "^Phone Number$",
+                        "^Mobile Number$",
+                        "^WhatsApp Number$"
+                    ]
+                );
+
+
+            const phone =
+                normalizeIndiaPhone(
+                    phoneRaw
+                );
+
+
             console.log(
-                "📈 Check-in received"
+                "📞 Check-in phone:",
+                JSON.stringify(phone)
             );
+
+
+            if (
+                !name ||
+                !phone
+            ) {
+
+                console.error(
+                    "❌ Check-in missing name or phone"
+                );
+
+                return res
+                    .status(400)
+                    .send(
+                        "Name or phone missing"
+                    );
+            }
+
+
+            // =================================================
+            // DIET FOLLOWED
+            // =================================================
+
+            const dietFollowed =
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^Diet Followed$",
+                        "Diet"
+                    ]
+                );
+
+
+            // =================================================
+            // SLEEP QUALITY
+            // =================================================
+
+            const sleepQuality =
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^Sleep Quality$",
+                        "Sleep"
+                    ]
+                );
+
+
+            // =================================================
+            // ACTIVITY LEVEL
+            // =================================================
+
+            const activityLevel =
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^Activity Level$",
+                        "Activity"
+                    ]
+                );
+
+
+            // =================================================
+            // NOTES
+            // =================================================
+
+            const notes =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Notes$",
+                            "Additional Notes",
+                            "Comments"
+                        ]
+                    )
+                );
+
+
+            // =================================================
+            // DEBUG VALUES
+            // =================================================
+
+            console.log(
+                "📋 CHECK-IN PARSED VALUES"
+            );
+
+            console.log(
+                "Name:",
+                JSON.stringify(name)
+            );
+
+            console.log(
+                "Phone:",
+                JSON.stringify(phone)
+            );
+
+            console.log(
+                "Diet Followed:",
+                JSON.stringify(
+                    dietFollowed
+                )
+            );
+
+            console.log(
+                "Sleep Quality:",
+                JSON.stringify(
+                    sleepQuality
+                )
+            );
+
+            console.log(
+                "Activity Level:",
+                JSON.stringify(
+                    activityLevel
+                )
+            );
+
+            console.log(
+                "Notes:",
+                JSON.stringify(notes)
+            );
+
+
+            // =================================================
+            // FIND EXISTING PATIENT
+            //
+            // Same approach as Follow-up:
+            // NAME + PHONE
+            // =================================================
+
+            const patient =
+                await findPatientByNameAndPhone(
+                    name,
+                    phone
+                );
+
+
+            if (!patient) {
+
+                console.error(
+                    "❌ Check-in patient not found"
+                );
+
+                console.error(
+                    "Name:",
+                    JSON.stringify(name)
+                );
+
+                console.error(
+                    "Phone:",
+                    JSON.stringify(phone)
+                );
+
+
+                return res
+                    .status(404)
+                    .send(
+                        "Patient not found"
+                    );
+            }
+
+
+            console.log(
+                "✅ Check-in patient matched:",
+                patient.id
+            );
+
+
+            // =================================================
+            // SUBMISSION DATE
+            // =================================================
+
+            const now =
+                new Date()
+                    .toISOString();
+
+
+            // =================================================
+            // BUILD NOTION CHECK-IN RECORD
+            // =================================================
+
+            const properties = {
+
+                [CHECKIN.title]:
+                    titleProperty(
+                        name
+                    ),
+
+
+                [CHECKIN.submittedAt]:
+                    dateProperty(
+                        now
+                    ),
+
+
+                [CHECKIN.patient]:
+                {
+                    relation: [
+                        {
+                            id:
+                                patient.id
+                        }
+                    ]
+                }
+            };
+
+
+            // =================================================
+            // DIET FOLLOWED
+            // =================================================
+
+            if (dietFollowed) {
+
+                properties[
+                    CHECKIN.dietFollowed
+                ] =
+                    selectProperty(
+                        dietFollowed
+                    );
+            }
+
+
+            // =================================================
+            // SLEEP QUALITY
+            //
+            // Screenshot looks like a Select property:
+            // 2, 3, 4 etc.
+            // =================================================
+
+            if (sleepQuality) {
+
+                properties[
+                    CHECKIN.sleepQuality
+                ] =
+                    selectProperty(
+                        String(
+                            sleepQuality
+                        )
+                    );
+            }
+
+
+            // =================================================
+            // ACTIVITY LEVEL
+            //
+            // Screenshot looks like Notion Status
+            // =================================================
+
+            if (activityLevel) {
+
+                properties[
+                    CHECKIN.activityLevel
+                ] =
+                    statusProperty(
+                        activityLevel
+                    );
+            }
+
+
+            // =================================================
+            // NOTES
+            // =================================================
+
+            if (notes) {
+
+                properties[
+                    CHECKIN.notes
+                ] =
+                    textProperty(
+                        notes
+                    );
+            }
+
+
+            // =================================================
+            // CREATE CHECK-IN RECORD
+            // =================================================
+
+            const checkin =
+                await notion.pages.create({
+
+                    parent: {
+
+                        data_source_id:
+                            NOTION_CHECKINS_DATA_SOURCE_ID
+                    },
+
+                    properties
+                });
+
+
+            console.log(
+                "✅ Check-in record created:",
+                checkin.id
+            );
+
+
+            // =================================================
+            // UPDATE PATIENT'S LAST CHECK-IN DATE
+            // =================================================
+
+            await updatePatient(
+                patient.id,
+                {
+                    lastCheckin:
+                        now
+                }
+            );
+
+
+            console.log(
+                "✅ Patient Last Check-in Date updated"
+            );
+
+
+            // =================================================
+            // WHATSAPP CONFIRMATION
+            // =================================================
+
+            try {
+
+                await sendWhatsAppMessage(
+                    phone,
+                    {
+
+                        type:
+                            "text",
+
+                        text: {
+
+                            body:
+`Thank you! ✅
+
+Your check-in has been received successfully.
+
+Your practitioner will be able to review your latest update.`
+                        }
+                    }
+                );
+
+
+                console.log(
+                    `✅ Check-in confirmation sent to ${phone}`
+                );
+
+
+            } catch (error) {
+
+                console.error(
+                    "⚠️ Check-in saved, but WhatsApp confirmation failed:"
+                );
+
+                console.error(
+                    error.response?.data ||
+                    error.message ||
+                    error
+                );
+            }
 
 
             return res
                 .status(200)
                 .send(
-                    "Check-in received"
+                    "Check-in processed"
                 );
 
 
         } catch (error) {
 
             console.error(
-                "❌ Check-in error:",
+                "❌ Check-in automation failed:"
+            );
+
+
+            console.error(
+                error.response?.data ||
+                error.body ||
+                error.message ||
                 error
             );
 
