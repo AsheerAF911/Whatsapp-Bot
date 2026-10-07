@@ -39,31 +39,6 @@ const NOTION_CHECKINS_DATA_SOURCE_ID =
 const NOTION_FOLLOWUPS_DATA_SOURCE_ID =
     process.env.NOTION_FOLLOWUPS_DATA_SOURCE_ID;
 
-const FOLLOWUP = {
-
-    title: "Follow-up Request",
-
-    patient: "Patient",
-
-    patientName: "Patient Name",
-
-    phone: "Phone Number",
-
-    reason: "Reason",
-
-    preferredDate: "Preferred Date",
-
-    preferredTime: "Preferred Time",
-
-    urgency: "Urgency",
-
-    notes: "Notes",
-
-    status: "Status",
-
-    requestedAt: "Requested At"
-};
-
 
 // GOOGLE
 const GOOGLE_BOOKING_URL =
@@ -206,6 +181,27 @@ const CHECKIN = {
     summary: "Response Summary"
 };
 
+
+const FOLLOWUP = {
+
+    title: "Patient Name",
+
+    patient: "Patient",
+
+    phone: "Phone Number",
+
+    reason: "Reason",
+
+    preferredDate: "Preferred Date",
+
+    preferredTime: "Preferred Time",
+
+    urgency: "Urgency",
+
+    notes: "Notes",
+
+    status: "Status"
+};
 
 // ======================================================
 // BASIC HELPERS
@@ -3300,9 +3296,8 @@ app.post(
 
                 [FOLLOWUP.title]:
                     titleProperty(
-                        `${name} - Follow-up`
+                        name
                     ),
-
 
                 [FOLLOWUP.patient]:
                 {
@@ -3314,23 +3309,9 @@ app.post(
                     ]
                 },
 
-
-                [FOLLOWUP.patientName]:
-                    textProperty(
-                        name
-                    ),
-
-
                 [FOLLOWUP.status]:
                     selectProperty(
                         "New"
-                    ),
-
-
-                [FOLLOWUP.requestedAt]:
-                    dateProperty(
-                        new Date()
-                            .toISOString()
                     )
             };
 
