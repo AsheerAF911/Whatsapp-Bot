@@ -2787,7 +2787,80 @@ app.post(
                 );
 
 
-            if (!fields.length) {
+            console.log(
+                "📦 RAW FOLLOW-UP BODY:"
+            );
+
+            console.log(
+                JSON.stringify(
+                    req.body,
+                    null,
+                    2
+                )
+            );
+
+
+            console.log(
+                "📦 EXTRACTED TALLY FIELDS:",
+                fields.length
+            );
+
+
+            for (
+                const field
+                of fields
+            ) {
+
+                console.log(
+                    "--------------------------"
+                );
+
+                console.log(
+                    "Label:",
+                    field.label
+                );
+
+                console.log(
+                    "Name:",
+                    field.name
+                );
+
+                console.log(
+                    "Key:",
+                    field.key
+                );
+
+                console.log(
+                    "Type:",
+                    field.type
+                );
+
+                console.log(
+                    "Value:",
+                    JSON.stringify(
+                        field.value
+                    )
+                );
+
+                console.log(
+                    "Answer:",
+                    JSON.stringify(
+                        field.answer
+                    )
+                );
+
+                console.log(
+                    "Response:",
+                    JSON.stringify(
+                        field.response
+                    )
+                );
+            }
+
+
+            if (
+                !fields.length
+            ) {
 
                 console.error(
                     "❌ No follow-up fields found"
@@ -2801,40 +2874,69 @@ app.post(
             }
 
 
+            // ==========================================
+            // NAME
+            // ==========================================
+
+            const nameRaw =
+                getFieldValue(
+                    fields,
+                    [
+                        "^Full Name$",
+                        "^Name$",
+                        "Patient Name"
+                    ]
+                );
+
+
             const name =
                 readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "^Full Name$",
-                            "^Name$",
-                            "Patient Name"
-                        ]
-                    )
-                );
+                    nameRaw
+                )
+                    ?.trim();
 
 
-            const email =
-                readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "^Email$",
-                            "Patient Email"
-                        ]
-                    )
-                );
+            console.log(
+                "👤 Raw name:",
+                JSON.stringify(
+                    nameRaw
+                )
+            );
 
+            console.log(
+                "👤 Parsed name:",
+                JSON.stringify(
+                    name
+                )
+            );
+
+
+            // ==========================================
+            // PHONE
+            // ==========================================
 
             const phoneRaw =
                 getFieldValue(
                     fields,
                     [
                         "Phone Number",
+                        "Phone",
+                        "Mobile Number",
                         "Mobile",
-                        "WhatsApp"
+                        "WhatsApp Number",
+                        "WhatsApp",
+                        "Contact Number",
+                        "Contact"
                     ]
                 );
+
+
+            console.log(
+                "📞 Raw phone:",
+                JSON.stringify(
+                    phoneRaw
+                )
+            );
 
 
             const phone =
@@ -2842,6 +2944,31 @@ app.post(
                     phoneRaw
                 );
 
+
+            console.log(
+                "📞 Normalized phone:",
+                JSON.stringify(
+                    phone
+                )
+            );
+
+
+            // ==========================================
+            // STOP TEMPORARILY IF PHONE WAS NOT FOUND
+            // ==========================================
+
+            if (!phone) {
+
+                console.error(
+                    "❌ Could not extract phone from follow-up form"
+                );
+
+                return res
+                    .status(400)
+                    .send(
+                        "Phone number could not be extracted"
+                    );
+            }
 
             const reason =
                 readableValue(
