@@ -36,6 +36,34 @@ const NOTION_PATIENT_HISTORY_DATA_SOURCE_ID =
 const NOTION_CHECKINS_DATA_SOURCE_ID =
     process.env.NOTION_CHECKINS_DATA_SOURCE_ID;
 
+const NOTION_FOLLOWUPS_DATA_SOURCE_ID =
+    process.env.NOTION_FOLLOWUPS_DATA_SOURCE_ID;
+
+const FOLLOWUP = {
+
+    title: "Follow-up Request",
+
+    patient: "Patient",
+
+    patientName: "Patient Name",
+
+    phone: "Phone Number",
+
+    reason: "Reason",
+
+    preferredDate: "Preferred Date",
+
+    preferredTime: "Preferred Time",
+
+    urgency: "Urgency",
+
+    notes: "Notes",
+
+    status: "Status",
+
+    requestedAt: "Requested At"
+};
+
 
 // GOOGLE
 const GOOGLE_BOOKING_URL =
@@ -2143,55 +2171,31 @@ What would you like to do?`
                 // -------------------------------
 
                 if (
-                    buttonId ===
-                    "existing_followup"
-                ) {
-
-                    if (
-                        FOLLOWUP_FORM_URL
+                        buttonId ===
+                        "existing_followup"
                     ) {
 
                         await sendWhatsAppMessage(
                             from,
                             {
-
-                                type:
-                                    "text",
+                                type: "text",
 
                                 text: {
 
                                     body:
-`You can request your follow-up here:
+                    `Please submit your follow-up request here:
 
-👉 ${FOLLOWUP_FORM_URL}`
+                    👉 ${FOLLOWUP_FORM_URL}
+
+                    The clinic team will review your request and contact you to confirm the appointment.`
                                 }
                             }
                         );
 
-                    } else {
 
-                        await sendWhatsAppMessage(
-                            from,
-                            {
-
-                                type:
-                                    "text",
-
-                                text: {
-
-                                    body:
-`Your follow-up request has been received.
-
-The clinic team will contact you shortly.`
-                                }
-                            }
-                        );
+                        return res
+                            .sendStatus(200);
                     }
-
-
-                    return res
-                        .sendStatus(200);
-                }
 
 
                 // -------------------------------
@@ -2254,7 +2258,60 @@ Your update will be shared with the clinic team.`
     }
 );
 
+app.get(
+    "/notion-followups-info",
+    async (req, res) => {
 
+        try {
+
+            const response =
+                await notion.databases.retrieve({
+
+                    database_id:
+                        process.env
+                            .NOTION_FOLLOWUPS_DATABASE_ID
+                });
+
+
+            return res.json({
+
+                database_id:
+                    response.id,
+
+                data_sources:
+                    response.data_sources
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "❌ Follow-up database lookup failed:"
+            );
+
+
+            console.error(
+                error.body ||
+                error.response?.data ||
+                error.message ||
+                error
+            );
+
+
+            return res
+                .status(500)
+                .json({
+
+                    ok: false,
+
+                    error:
+                        error.body ||
+                        error.response?.data ||
+                        error.message
+                });
+        }
+    }
+);
 // ======================================================
 // INTAKE WEBHOOK
 //
@@ -2702,6 +2759,365 @@ app.post(
                 error
             );
 
+
+            return res
+                .sendStatus(500);
+        }
+    }
+);
+
+
+// ======================================================
+// FOLLOW-UP WEBHOOK
+// ======================================================
+
+app.post(
+    "/followup-webhook",
+    async (req, res) => {
+
+        console.log(
+            "📋 Follow-up webhook received"
+        );
+
+        try {
+
+            const fields =
+                getFormFields(
+                    req.body
+                );
+
+
+            if (!fields.length) {
+
+                console.error(
+                    "❌ No follow-up fields found"
+                );
+
+                return res
+                    .status(400)
+                    .send(
+                        "No form fields found"
+                    );
+            }
+
+
+            const name =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Full Name$",
+                            "^Name$",
+                            "Patient Name"
+                        ]
+                    )
+                );
+
+
+            const email =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Email$",
+                            "Patient Email"
+                        ]
+                    )
+                );
+
+
+            const phoneRaw =
+                getFieldValue(
+                    fields,
+                    [
+                        "Phone Number",
+                        "Mobile",
+                        "WhatsApp"
+                    ]
+                );
+
+
+            const phone =
+                normalizeIndiaPhone(
+                    phoneRaw
+                );
+
+
+            const reason =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Reason for Follow-up",
+                            "Reason"
+                        ]
+                    )
+                );
+
+
+            const preferredDateRaw =
+                getFieldValue(
+                    fields,
+                    [
+                        "Preferred Date"
+                    ]
+                );
+
+
+            const preferredDate =
+                toDateOnly(
+                    preferredDateRaw
+                );
+
+
+            const preferredTime =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Preferred Time",
+                            "Time Preference"
+                        ]
+                    )
+                );
+
+
+            const urgency =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Urgency",
+                            "How soon"
+                        ]
+                    )
+                );
+
+
+            const notes =
+                readableValue(
+                    getFieldValue(
+                        fields,
+                        [
+                            "Additional Notes",
+                            "Notes"
+                        ]
+                    )
+                );
+
+
+            // ---------------------------------
+            // FIND EXISTING PATIENT
+            // ---------------------------------
+
+            const patient =
+                await findMatchingPatient({
+                    name,
+                    email,
+                    phone
+                });
+
+
+            if (!patient) {
+
+                console.error(
+                    "❌ Follow-up patient not found:",
+                    name,
+                    phone,
+                    email
+                );
+
+                return res
+                    .status(404)
+                    .send(
+                        "Patient not found"
+                    );
+            }
+
+
+            console.log(
+                "✅ Follow-up patient matched:",
+                patient.id
+            );
+
+
+            // ---------------------------------
+            // CREATE FOLLOW-UP REQUEST
+            // ---------------------------------
+
+            const properties = {
+
+                [FOLLOWUP.title]:
+                    titleProperty(
+                        `${name} - Follow-up`
+                    ),
+
+                [FOLLOWUP.patient]:
+                {
+                    relation: [
+                        {
+                            id:
+                                patient.id
+                        }
+                    ]
+                },
+
+                [FOLLOWUP.patientName]:
+                    textProperty(
+                        name
+                    ),
+
+                [FOLLOWUP.status]:
+                    selectProperty(
+                        "New"
+                    ),
+
+                [FOLLOWUP.requestedAt]:
+                    dateProperty(
+                        new Date()
+                            .toISOString()
+                    )
+            };
+
+
+            if (phone) {
+
+                properties[
+                    FOLLOWUP.phone
+                ] =
+                    textProperty(
+                        phone
+                    );
+            }
+
+
+            if (reason) {
+
+                properties[
+                    FOLLOWUP.reason
+                ] =
+                    textProperty(
+                        reason
+                    );
+            }
+
+
+            if (preferredDate) {
+
+                properties[
+                    FOLLOWUP.preferredDate
+                ] =
+                    dateProperty(
+                        preferredDate
+                    );
+            }
+
+
+            if (preferredTime) {
+
+                properties[
+                    FOLLOWUP.preferredTime
+                ] =
+                    selectProperty(
+                        preferredTime
+                    );
+            }
+
+
+            if (urgency) {
+
+                properties[
+                    FOLLOWUP.urgency
+                ] =
+                    selectProperty(
+                        urgency
+                    );
+            }
+
+
+            if (notes) {
+
+                properties[
+                    FOLLOWUP.notes
+                ] =
+                    textProperty(
+                        notes
+                    );
+            }
+
+
+            await notion.pages.create({
+
+                parent: {
+
+                    data_source_id:
+                        NOTION_FOLLOWUPS_DATA_SOURCE_ID
+                },
+
+                properties
+            });
+
+
+            console.log(
+                "✅ Follow-up request created"
+            );
+
+
+            // ---------------------------------
+            // WHATSAPP CONFIRMATION
+            // ---------------------------------
+
+            if (phone) {
+
+                try {
+
+                    await sendWhatsAppMessage(
+                        phone,
+                        {
+
+                            type:
+                                "text",
+
+                            text: {
+
+                                body:
+`Your follow-up request has been received ✅
+
+The clinic team will review your preferred date and time and contact you to confirm the appointment.`
+                            }
+                        }
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "⚠️ Follow-up saved, but WhatsApp confirmation failed:",
+                        error.response?.data ||
+                        error.message
+                    );
+                }
+            }
+
+
+            return res
+                .status(200)
+                .send(
+                    "Follow-up processed"
+                );
+
+
+        } catch (error) {
+
+            console.error(
+                "❌ Follow-up automation failed:"
+            );
+
+            console.error(
+                error.response?.data ||
+                error.body ||
+                error.message ||
+                error
+            );
 
             return res
                 .sendStatus(500);
