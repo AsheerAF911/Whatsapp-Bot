@@ -335,6 +335,263 @@ function generatePatientId() {
 }
 
 
+function getTallyFieldDisplayValue(
+    fields,
+    patterns
+) {
+
+    const field =
+        findField(
+            fields,
+            patterns
+        );
+
+
+    if (!field) {
+        return null;
+    }
+
+
+    // Tally dropdowns return selected option IDs
+    if (
+        Array.isArray(
+            field.value
+        ) &&
+        Array.isArray(
+            field.options
+        )
+    ) {
+
+        const selectedIds =
+            field.value;
+
+
+        const selectedTexts =
+            field.options
+                .filter(
+                    option =>
+                        selectedIds.includes(
+                            option.id
+                        )
+                )
+                .map(
+                    option =>
+                        option.text
+                );
+
+
+        return selectedTexts
+            .join(", ");
+    }
+
+
+    return (
+        field.value ??
+        field.answer ??
+        field.response ??
+        null
+    );
+}
+
+
+async function findPatientByNameAndPhone(
+    name,
+    phone
+) {
+
+    if (
+        !name ||
+        !phone
+    ) {
+
+        console.log(
+            "❌ Missing name or phone for patient lookup"
+        );
+
+        return null;
+    }
+
+
+    const normalizedIncomingName =
+        name
+            .trim()
+            .toLowerCase()
+            .replace(
+                /\s+/g,
+                " "
+            );
+
+
+    const normalizedIncomingPhone =
+        normalizeIndiaPhone(
+            phone
+        );
+
+
+    console.log(
+        "================================"
+    );
+
+    console.log(
+        "🔎 FOLLOW-UP PATIENT LOOKUP"
+    );
+
+    console.log(
+        "Incoming name:",
+        JSON.stringify(
+            normalizedIncomingName
+        )
+    );
+
+    console.log(
+        "Incoming phone:",
+        JSON.stringify(
+            normalizedIncomingPhone
+        )
+    );
+
+
+    // Query Notion by exact title/name first
+    const response =
+        await notion.dataSources.query({
+
+            data_source_id:
+                NOTION_PATIENTS_DATA_SOURCE_ID,
+
+            filter: {
+
+                property:
+                    PATIENT.name,
+
+                title: {
+
+                    equals:
+                        name
+                }
+            }
+        });
+
+
+    console.log(
+        "📦 Patients returned by Notion:",
+        response.results.length
+    );
+
+
+    for (
+        const patient
+        of response.results
+    ) {
+
+        const notionName =
+            patient.properties[
+                PATIENT.name
+            ]?.title
+                ?.map(
+                    part =>
+                        part.plain_text
+                )
+                .join("")
+                .trim() ||
+            "";
+
+
+        const notionPhone =
+            patient.properties[
+                PATIENT.phone
+            ]?.rich_text
+                ?.map(
+                    part =>
+                        part.plain_text
+                )
+                .join("")
+                .trim() ||
+            "";
+
+
+        const normalizedNotionName =
+            notionName
+                .toLowerCase()
+                .replace(
+                    /\s+/g,
+                    " "
+                );
+
+
+        const normalizedNotionPhone =
+            normalizeIndiaPhone(
+                notionPhone
+            );
+
+
+        console.log(
+            "-----------------------"
+        );
+
+        console.log(
+            "Candidate page:",
+            patient.id
+        );
+
+        console.log(
+            "Notion name:",
+            JSON.stringify(
+                notionName
+            )
+        );
+
+        console.log(
+            "Notion phone:",
+            JSON.stringify(
+                notionPhone
+            )
+        );
+
+
+        const nameMatches =
+            normalizedNotionName ===
+            normalizedIncomingName;
+
+
+        const phoneMatches =
+            normalizedNotionPhone ===
+            normalizedIncomingPhone;
+
+
+        console.log(
+            "Name matches:",
+            nameMatches
+        );
+
+        console.log(
+            "Phone matches:",
+            phoneMatches
+        );
+
+
+        if (
+            nameMatches &&
+            phoneMatches
+        ) {
+
+            console.log(
+                "✅ FOLLOW-UP PATIENT FOUND:",
+                patient.id
+            );
+
+            return patient;
+        }
+    }
+
+
+    console.log(
+        "❌ No Name + Phone patient match"
+    );
+
+
+    return null;
+}
+
 // ======================================================
 // NOTION PROPERTY BUILDERS
 // ======================================================
@@ -2787,80 +3044,7 @@ app.post(
                 );
 
 
-            console.log(
-                "📦 RAW FOLLOW-UP BODY:"
-            );
-
-            console.log(
-                JSON.stringify(
-                    req.body,
-                    null,
-                    2
-                )
-            );
-
-
-            console.log(
-                "📦 EXTRACTED TALLY FIELDS:",
-                fields.length
-            );
-
-
-            for (
-                const field
-                of fields
-            ) {
-
-                console.log(
-                    "--------------------------"
-                );
-
-                console.log(
-                    "Label:",
-                    field.label
-                );
-
-                console.log(
-                    "Name:",
-                    field.name
-                );
-
-                console.log(
-                    "Key:",
-                    field.key
-                );
-
-                console.log(
-                    "Type:",
-                    field.type
-                );
-
-                console.log(
-                    "Value:",
-                    JSON.stringify(
-                        field.value
-                    )
-                );
-
-                console.log(
-                    "Answer:",
-                    JSON.stringify(
-                        field.answer
-                    )
-                );
-
-                console.log(
-                    "Response:",
-                    JSON.stringify(
-                        field.response
-                    )
-                );
-            }
-
-
-            if (
-                !fields.length
-            ) {
+            if (!fields.length) {
 
                 console.error(
                     "❌ No follow-up fields found"
@@ -2874,59 +3058,34 @@ app.post(
             }
 
 
-            // ==========================================
-            // NAME
-            // ==========================================
-
-            const nameRaw =
-                getFieldValue(
-                    fields,
-                    [
-                        "^Full Name$",
-                        "^Name$",
-                        "Patient Name"
-                    ]
-                );
-
+            // =================================================
+            // EXTRACT PATIENT NAME
+            // =================================================
 
             const name =
                 readableValue(
-                    nameRaw
+                    getFieldValue(
+                        fields,
+                        [
+                            "^Full Name$"
+                        ]
+                    )
                 )
-                    ?.trim();
+                    .trim();
 
 
-            console.log(
-                "👤 Raw name:",
-                JSON.stringify(
-                    nameRaw
-                )
-            );
-
-            console.log(
-                "👤 Parsed name:",
-                JSON.stringify(
-                    name
-                )
-            );
-
-
-            // ==========================================
-            // PHONE
-            // ==========================================
+            // =================================================
+            // EXTRACT PHONE
+            // =================================================
 
             const phoneRaw =
                 getFieldValue(
                     fields,
                     [
-                        "Phone Number",
-                        "Phone",
-                        "Mobile Number",
-                        "Mobile",
-                        "WhatsApp Number",
-                        "WhatsApp",
-                        "Contact Number",
-                        "Contact"
+                        "^Contact Number$",
+                        "^Phone Number$",
+                        "^Mobile Number$",
+                        "^WhatsApp Number$"
                     ]
                 );
 
@@ -2953,10 +3112,6 @@ app.post(
             );
 
 
-            // ==========================================
-            // STOP TEMPORARILY IF PHONE WAS NOT FOUND
-            // ==========================================
-
             if (!phone) {
 
                 console.error(
@@ -2966,19 +3121,21 @@ app.post(
                 return res
                     .status(400)
                     .send(
-                        "Phone number could not be extracted"
+                        "Phone number missing"
                     );
             }
 
+
+            // =================================================
+            // EXTRACT FOLLOW-UP DETAILS
+            // =================================================
+
             const reason =
-                readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "Reason for Follow-up",
-                            "Reason"
-                        ]
-                    )
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^Reason for follow-up$"
+                    ]
                 );
 
 
@@ -2986,7 +3143,7 @@ app.post(
                 getFieldValue(
                     fields,
                     [
-                        "Preferred Date"
+                        "^Preferred Date$"
                     ]
                 );
 
@@ -2998,26 +3155,20 @@ app.post(
 
 
             const preferredTime =
-                readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "Preferred Time",
-                            "Time Preference"
-                        ]
-                    )
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^Preferred Time$"
+                    ]
                 );
 
 
             const urgency =
-                readableValue(
-                    getFieldValue(
-                        fields,
-                        [
-                            "Urgency",
-                            "How soon"
-                        ]
-                    )
+                getTallyFieldDisplayValue(
+                    fields,
+                    [
+                        "^How soon do you need the appointment\\?$"
+                    ]
                 );
 
 
@@ -3026,33 +3177,106 @@ app.post(
                     getFieldValue(
                         fields,
                         [
-                            "Additional Notes",
-                            "Notes"
+                            "^Additional Notes$"
                         ]
                     )
                 );
 
 
-            // ---------------------------------
+            // =================================================
+            // DEBUG PARSED VALUES
+            // =================================================
+
+            console.log(
+                "📋 FOLLOW-UP PARSED VALUES"
+            );
+
+            console.log(
+                "Name:",
+                JSON.stringify(
+                    name
+                )
+            );
+
+            console.log(
+                "Phone:",
+                JSON.stringify(
+                    phone
+                )
+            );
+
+            console.log(
+                "Reason:",
+                JSON.stringify(
+                    reason
+                )
+            );
+
+            console.log(
+                "Preferred Date:",
+                JSON.stringify(
+                    preferredDate
+                )
+            );
+
+            console.log(
+                "Preferred Time:",
+                JSON.stringify(
+                    preferredTime
+                )
+            );
+
+            console.log(
+                "Urgency:",
+                JSON.stringify(
+                    urgency
+                )
+            );
+
+            console.log(
+                "Notes:",
+                JSON.stringify(
+                    notes
+                )
+            );
+
+
+            // =================================================
             // FIND EXISTING PATIENT
-            // ---------------------------------
+            //
+            // MATCH USING:
+            // NAME + PHONE
+            //
+            // PHONE ALONE IS NOT UNIQUE
+            // =================================================
 
             const patient =
-                await findMatchingPatient({
+                await findPatientByNameAndPhone(
                     name,
-                    email,
                     phone
-                });
+                );
 
 
             if (!patient) {
 
                 console.error(
-                    "❌ Follow-up patient not found:",
-                    name,
-                    phone,
-                    email
+                    "❌ Follow-up patient not found"
                 );
+
+                console.error(
+                    "Name:",
+                    JSON.stringify(
+                        name
+                    )
+                );
+
+                console.error(
+                    "Phone:",
+                    JSON.stringify(
+                        phone
+                    )
+                );
+
 
                 return res
                     .status(404)
@@ -3068,9 +3292,9 @@ app.post(
             );
 
 
-            // ---------------------------------
-            // CREATE FOLLOW-UP REQUEST
-            // ---------------------------------
+            // =================================================
+            // BUILD FOLLOW-UP NOTION PROPERTIES
+            // =================================================
 
             const properties = {
 
@@ -3078,6 +3302,7 @@ app.post(
                     titleProperty(
                         `${name} - Follow-up`
                     ),
+
 
                 [FOLLOWUP.patient]:
                 {
@@ -3089,15 +3314,18 @@ app.post(
                     ]
                 },
 
+
                 [FOLLOWUP.patientName]:
                     textProperty(
                         name
                     ),
 
+
                 [FOLLOWUP.status]:
                     selectProperty(
                         "New"
                     ),
+
 
                 [FOLLOWUP.requestedAt]:
                     dateProperty(
@@ -3106,6 +3334,10 @@ app.post(
                     )
             };
 
+
+            // =================================================
+            // PHONE
+            // =================================================
 
             if (phone) {
 
@@ -3118,6 +3350,16 @@ app.post(
             }
 
 
+            // =================================================
+            // REASON
+            //
+            // If Reason in Notion is Rich Text:
+            // keep textProperty()
+            //
+            // If Reason is Select:
+            // change this to selectProperty(reason)
+            // =================================================
+
             if (reason) {
 
                 properties[
@@ -3128,6 +3370,10 @@ app.post(
                     );
             }
 
+
+            // =================================================
+            // PREFERRED DATE
+            // =================================================
 
             if (preferredDate) {
 
@@ -3140,6 +3386,10 @@ app.post(
             }
 
 
+            // =================================================
+            // PREFERRED TIME
+            // =================================================
+
             if (preferredTime) {
 
                 properties[
@@ -3150,6 +3400,10 @@ app.post(
                     );
             }
 
+
+            // =================================================
+            // URGENCY
+            // =================================================
 
             if (urgency) {
 
@@ -3162,6 +3416,10 @@ app.post(
             }
 
 
+            // =================================================
+            // NOTES
+            // =================================================
+
             if (notes) {
 
                 properties[
@@ -3173,26 +3431,32 @@ app.post(
             }
 
 
-            await notion.pages.create({
+            // =================================================
+            // CREATE FOLLOW-UP REQUEST
+            // =================================================
 
-                parent: {
+            const followup =
+                await notion.pages.create({
 
-                    data_source_id:
-                        NOTION_FOLLOWUPS_DATA_SOURCE_ID
-                },
+                    parent: {
 
-                properties
-            });
+                        data_source_id:
+                            NOTION_FOLLOWUPS_DATA_SOURCE_ID
+                    },
+
+                    properties
+                });
 
 
             console.log(
-                "✅ Follow-up request created"
+                "✅ Follow-up request created:",
+                followup.id
             );
 
 
-            // ---------------------------------
-            // WHATSAPP CONFIRMATION
-            // ---------------------------------
+            // =================================================
+            // SEND WHATSAPP CONFIRMATION
+            // =================================================
 
             if (phone) {
 
@@ -3215,12 +3479,23 @@ The clinic team will review your preferred date and time and contact you to conf
                         }
                     );
 
+
+                    console.log(
+                        `✅ Follow-up confirmation sent to ${phone}`
+                    );
+
+
                 } catch (error) {
 
                     console.error(
-                        "⚠️ Follow-up saved, but WhatsApp confirmation failed:",
+                        "⚠️ Follow-up saved, but WhatsApp confirmation failed:"
+                    );
+
+
+                    console.error(
                         error.response?.data ||
-                        error.message
+                        error.message ||
+                        error
                     );
                 }
             }
@@ -3239,12 +3514,14 @@ The clinic team will review your preferred date and time and contact you to conf
                 "❌ Follow-up automation failed:"
             );
 
+
             console.error(
                 error.response?.data ||
                 error.body ||
                 error.message ||
                 error
             );
+
 
             return res
                 .sendStatus(500);
