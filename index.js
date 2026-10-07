@@ -3514,6 +3514,28 @@ app.post(
         console.log(
             "📋 Follow-up webhook received"
         );
+        console.log(
+            "================================"
+        );
+
+        console.log(
+            "Event ID:",
+            req.body?.eventId
+        );
+
+        console.log(
+            "Submission ID:",
+            req.body?.data?.submissionId
+        );
+
+        console.log(
+            "Created At:",
+            req.body?.createdAt
+        );
+
+        console.log(
+            "================================"
+        );
 
         try {
 
